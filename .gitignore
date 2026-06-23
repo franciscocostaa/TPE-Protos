@@ -2,3 +2,6 @@
 ./obj/*
 
 /extra/
+/docs/
+
+.DS_Store
