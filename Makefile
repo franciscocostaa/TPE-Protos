@@ -1,8 +1,9 @@
 include ./Makefile.inc
 
-SERVER_SOURCES=$(wildcard src/server/*.c)
-CLIENT_SOURCES=$(wildcard src/client/*.c)
-SHARED_SOURCES=$(wildcard src/shared/*.c)
+# Se busca recursivamente para soportar subdirectorios (socks5/, mgmt/, dns/, ...)
+SERVER_SOURCES=$(shell find src/server -name '*.c')
+CLIENT_SOURCES=$(shell find src/client -name '*.c')
+SHARED_SOURCES=$(shell find src/shared -name '*.c')
 
 SERVER_OBJECTS=$(SERVER_SOURCES:src/%.c=obj/%.o)
 CLIENT_OBJECTS=$(CLIENT_SOURCES:src/%.c=obj/%.o)
@@ -27,9 +28,7 @@ $(CLIENT_OUTPUT_FILE): $(CLIENT_OBJECTS) $(SHARED_OBJECTS)
 	$(COMPILER) $(COMPILER_FLAGS) $(CLIENT_OBJECTS) $(SHARED_OBJECTS) -o $(CLIENT_OUTPUT_FILE)
 
 obj/%.o: src/%.c
-	mkdir -p $(OBJECTS_FOLDER)/server
-	mkdir -p $(OBJECTS_FOLDER)/client
-	mkdir -p $(OBJECTS_FOLDER)/shared
+	mkdir -p $(@D)
 	$(COMPILER) $(COMPILER_FLAGS) -c $< -o $@
 
 clean:

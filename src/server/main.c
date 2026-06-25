@@ -1,26 +1,32 @@
 /**
- * main.c - servidor proxy SOCKSv5 concurrente (sockets no bloqueantes).
+ * main.c - servidor proxy SOCKSv5 + servicio de monitoreo (sockets no bloqueantes).
  *
- * Monta un socket pasivo y atiende TODAS las conexiones en un único hilo
- * mediante el selector (multiplexación no bloqueante). El único trabajo
- * bloqueante (resolución de DNS con getaddrinfo) se descarga en hilos
- * auxiliares que notifican al selector cuando terminan.
+ * Monta DOS sockets pasivos en un único proceso:
+ *   - SOCKS5  (data-path del proxy)        -> socksv5_passive_accept
+ *   - mgmt    (protocolo de monitoreo)     -> mgmt_passive_accept
+ *
+ * Ambos se atienden en un único hilo mediante el selector (multiplexación no
+ * bloqueante). El único trabajo bloqueante (resolución de DNS con getaddrinfo)
+ * se descarga en hilos auxiliares que notifican al selector cuando terminan.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <limits.h>
 #include <signal.h>
 #include <unistd.h>
 
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include "args.h"
 #include "selector.h"
 #include "socks5.h"
+#include "mgmt/mgmt.h"
+#include "users.h"
+#include "metrics.h"
+#include "config.h"
 
-#define DEFAULT_SOCKS_PORT        1080
 #define MAX_PENDING_CONNECTIONS   20
 #define SELECTOR_INITIAL_ELEMENTS 1024
 #define SELECTOR_TIMEOUT_SECONDS  10
@@ -28,81 +34,106 @@
 /** señal interna que usa el selector para despertarse (p. ej. fin de DNS) */
 #define SELECTOR_SIGNAL SIGALRM
 
-static bool terminated = false;
+/**
+ * Cuenta de señales de terminación recibidas:
+ *   0 -> operación normal
+ *   1 -> graceful shutdown: dejamos de aceptar y drenamos conexiones
+ *  >=2 -> apagado forzado
+ */
+static volatile sig_atomic_t terminate_count = 0;
 
 static void
 sigterm_handler(const int signal) {
-    printf("Señal %d recibida, cerrando el servidor.\n", signal);
-    terminated = true;
+    (void) signal;
+    terminate_count++;
 }
 
-/** convierte un argumento de línea de comandos en un puerto válido */
-static unsigned short
-parse_port(const char *s) {
-    char *end = NULL;
-    errno = 0;
-    const long port = strtol(s, &end, 10);
-    if (end == s || *end != '\0' || errno == ERANGE || port < 0 || port > USHRT_MAX) {
-        fprintf(stderr, "Puerto inválido: %s\n", s);
-        exit(EXIT_FAILURE);
-    }
-    return (unsigned short) port;
-}
-
-int
-main(const int argc, const char **argv) {
-    unsigned short socks_port = DEFAULT_SOCKS_PORT;
-    if (argc == 2) {
-        socks_port = parse_port(argv[1]);
-    } else if (argc > 2) {
-        fprintf(stderr, "Uso: %s [puerto]\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    // No leemos de stdin.
-    close(STDIN_FILENO);
-
-    // Un write a un socket cerrado debe fallar con EPIPE, no matar el proceso.
-    signal(SIGPIPE, SIG_IGN);
-
-    const char     *err_msg  = NULL;
-    selector_status ss       = SELECTOR_SUCCESS;
-    fd_selector     selector = NULL;
-    int             server   = -1;
-
-    // Socket pasivo IPv6 dual-stack: atiende clientes IPv4 e IPv6.
+/**
+ * Crea un socket pasivo IPv6 dual-stack (atiende clientes IPv4 e IPv6) ligado a
+ * in6addr_any en el puerto dado. Devuelve el fd o -1 (con *err_msg seteado).
+ */
+static int
+create_passive_socket(const unsigned short port, const char **err_msg) {
     struct sockaddr_in6 addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin6_family = AF_INET6;
     addr.sin6_addr   = in6addr_any;
-    addr.sin6_port   = htons(socks_port);
+    addr.sin6_port   = htons(port);
 
-    server = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-    if (server < 0) {
-        err_msg = "no se pudo crear el socket pasivo";
-        goto finally;
+    const int fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0) {
+        *err_msg = "no se pudo crear el socket pasivo";
+        return -1;
     }
 
-    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+    /* Forzamos dual-stack explícito (en algunas plataformas viene v6-only). */
+    setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &(int){0}, sizeof(int));
 
-    if (bind(server, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-        err_msg = "fallo en bind()";
-        goto finally;
+    if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
+        *err_msg = "fallo en bind()";
+        close(fd);
+        return -1;
     }
-    if (listen(server, MAX_PENDING_CONNECTIONS) < 0) {
-        err_msg = "fallo en listen()";
-        goto finally;
+    if (listen(fd, MAX_PENDING_CONNECTIONS) < 0) {
+        *err_msg = "fallo en listen()";
+        close(fd);
+        return -1;
     }
+    if (selector_fd_set_nio(fd) == -1) {
+        *err_msg = "no se pudo poner el socket pasivo en modo no bloqueante";
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
 
-    fprintf(stdout, "Servidor SOCKSv5 escuchando en el puerto TCP %u\n", socks_port);
+int
+main(const int argc, char **argv) {
+    struct socks5args args;
+    parse_args(argc, argv, &args);
 
+    /* Inicialización de los módulos compartidos (ver docs/PLAN.md §3). */
+    users_init();
+    metrics_init();
+    for (int i = 0; i < MAX_USERS; i++) {
+        if (args.users[i].name != NULL) {
+            users_add(args.users[i].name, args.users[i].pass);
+        }
+    }
+    const struct config initial_cfg = {
+        /* si se cargaron usuarios, por defecto exigimos autenticación */
+        .auth_required      = users_count() > 0,
+        .dissectors_enabled = args.disectors_enabled,
+        .io_buffer_size     = SOCKS5_BUFFER_SIZE,
+    };
+    config_init(&initial_cfg);
+
+    /* No leemos de stdin. */
+    close(STDIN_FILENO);
+    /* Un write a un socket cerrado debe fallar con EPIPE, no matar el proceso. */
+    signal(SIGPIPE, SIG_IGN);
     signal(SIGTERM, sigterm_handler);
     signal(SIGINT,  sigterm_handler);
 
-    if (selector_fd_set_nio(server) == -1) {
-        err_msg = "no se pudo poner el socket pasivo en modo no bloqueante";
+    const char     *err_msg     = NULL;
+    selector_status ss          = SELECTOR_SUCCESS;
+    fd_selector     selector    = NULL;
+    int             socks_fd    = -1;
+    int             mgmt_fd     = -1;
+    bool            accepting   = true;
+
+    socks_fd = create_passive_socket(args.socks_port, &err_msg);
+    if (socks_fd < 0) {
         goto finally;
     }
+    mgmt_fd = create_passive_socket(args.mng_port, &err_msg);
+    if (mgmt_fd < 0) {
+        goto finally;
+    }
+
+    fprintf(stdout, "Servidor SOCKSv5 escuchando en el puerto TCP %u\n", args.socks_port);
+    fprintf(stdout, "Servicio de monitoreo escuchando en el puerto TCP %u\n", args.mng_port);
 
     const struct selector_init conf = {
         .signal         = SELECTOR_SIGNAL,
@@ -119,20 +150,44 @@ main(const int argc, const char **argv) {
         goto finally;
     }
 
-    const struct fd_handler passive = {
-        .handle_read  = socksv5_passive_accept,
-        .handle_write = NULL,
-        .handle_block = NULL,
-        .handle_close = NULL,
-    };
-    ss = selector_register(selector, server, &passive, OP_READ, NULL);
+    const struct fd_handler socks_passive = { .handle_read = socksv5_passive_accept };
+    const struct fd_handler mgmt_passive  = { .handle_read = mgmt_passive_accept };
+
+    ss = selector_register(selector, socks_fd, &socks_passive, OP_READ, NULL);
     if (ss != SELECTOR_SUCCESS) {
-        err_msg = "no se pudo registrar el socket pasivo";
+        err_msg = "no se pudo registrar el socket pasivo SOCKS";
+        goto finally;
+    }
+    ss = selector_register(selector, mgmt_fd, &mgmt_passive, OP_READ, NULL);
+    if (ss != SELECTOR_SUCCESS) {
+        err_msg = "no se pudo registrar el socket pasivo de monitoreo";
         goto finally;
     }
 
-    while (!terminated) {
-        err_msg = NULL;
+    /*
+     * Loop principal con graceful shutdown (consigna F9):
+     *  - 1ª señal: dejamos de aceptar (desregistramos los sockets pasivos) y
+     *    seguimos iterando hasta que no queden conexiones vivas.
+     *  - 2ª señal: apagado forzado inmediato.
+     */
+    while (true) {
+        if (terminate_count >= 2) {
+            fprintf(stderr, "Segunda señal recibida: apagado forzado.\n");
+            break;
+        }
+        if (terminate_count >= 1 && accepting) {
+            fprintf(stderr, "Señal recibida: dejando de aceptar conexiones, "
+                            "esperando a que terminen las activas...\n");
+            selector_unregister_fd(selector, socks_fd);
+            selector_unregister_fd(selector, mgmt_fd);
+            close(socks_fd); socks_fd = -1;
+            close(mgmt_fd);  mgmt_fd  = -1;
+            accepting = false;
+        }
+        if (!accepting && metrics_get().connections_current == 0) {
+            break;  // todas las conexiones drenaron
+        }
+
         ss = selector_select(selector);
         if (ss != SELECTOR_SUCCESS) {
             err_msg = "error durante el selector_select";
@@ -155,8 +210,11 @@ finally:
     }
     selector_close();
     socksv5_pool_destroy();
-    if (server >= 0) {
-        close(server);
+    if (socks_fd >= 0) {
+        close(socks_fd);
+    }
+    if (mgmt_fd >= 0) {
+        close(mgmt_fd);
     }
     return ret;
 }

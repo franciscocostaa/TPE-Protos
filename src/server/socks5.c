@@ -29,6 +29,7 @@
 #include "stm.h"
 #include "selector.h"
 #include "socks5.h"
+#include "metrics.h"
 
 /** cantidad máxima de estructuras `socks5` cacheadas para reuso */
 #define SOCKS5_POOL_MAX 50
@@ -242,7 +243,9 @@ socksv5_passive_accept(struct selector_key *key) {
     if (selector_register(key->s, client, &socks5_handler, OP_READ, s) != SELECTOR_SUCCESS) {
         socks5_destroy(s);
         close(client);
+        return;
     }
+    metrics_connection_open();
 }
 
 /* ---- handlers top-level: delegan en la máquina de estados ---------------- */
@@ -283,6 +286,7 @@ socksv5_close(struct selector_key *key) {
 static void
 socksv5_done(struct selector_key *key) {
     struct socks5 *s = ATTACHMENT(key);
+    metrics_connection_close();
     const int fds[] = { s->client_fd, s->origin_fd };
     for (unsigned i = 0; i < sizeof(fds) / sizeof(fds[0]); i++) {
         if (fds[i] != -1) {
