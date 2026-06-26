@@ -10,6 +10,7 @@
 void
 stm_init(struct state_machine *stm) {
     // verificamos que los estados son correlativos, y que están bien asignados.
+    // we check if the states are ordered and that the initial state is valid
     for(unsigned i = 0 ; i <= stm->max_state; i++) {
         if(i != stm->states[i].state) {
             abort();
@@ -22,7 +23,8 @@ stm_init(struct state_machine *stm) {
         abort();
     }
 }
-
+// Inicializa la máquina en su estado inicial ante el primer evento.
+// Si current es NULL, apunta al estado inicial y ejecuta su on_arrival si existe.
 inline static void
 handle_first(struct state_machine *stm, struct selector_key *key) {
     if(stm->current == NULL) {
@@ -32,7 +34,9 @@ handle_first(struct state_machine *stm, struct selector_key *key) {
         }
     }
 }
-
+// Realiza la transición al estado next.
+// Valida que next exista, ejecuta on_departure del estado actual,
+// actualiza current y ejecuta on_arrival del nuevo estado si corresponde.
 inline static
 void jump(struct state_machine *stm, unsigned next, struct selector_key *key) {
     if(next > stm->max_state) {
@@ -49,15 +53,28 @@ void jump(struct state_machine *stm, unsigned next, struct selector_key *key) {
         }
     }
 }
-
+//se pasan stm pues sino la funcion no sabria:
+/*
+- cuál es el estado actual
+- cuál es el estado inicial
+- cuáles son todos los estados posibles
+- a qué estado tiene que saltar después
+*/
+//ademas se pasa el key que es el que contine:
+/*
+- qué file descriptor disparó el evento
+- qué datos asociados tiene esa conexión
+- puntero al selector
+- intereses actuales, por ejemplo READ o WRITE
+*/
 unsigned
 stm_handler_read(struct state_machine *stm, struct selector_key *key) {
     handle_first(stm, key);
     if(stm->current->on_read_ready == 0) {
         abort();
     }
-    const unsigned int ret = stm->current->on_read_ready(key);
-    jump(stm, ret, key);
+    const unsigned int ret = stm->current->on_read_ready(key); //ejecutar el read
+    jump(stm, ret, key); //si el read devuelve un estado distinto, saltar a ese estado
 
     return ret;
 }

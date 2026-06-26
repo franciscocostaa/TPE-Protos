@@ -150,10 +150,10 @@ main(const int argc, char **argv) {
         err_msg = "no se pudo crear el selector";
         goto finally;
     }
-
+    //this functions are the handlers for the passive sockets, they are called when a new connection is accepted
     const struct fd_handler socks_passive = { .handle_read = socksv5_passive_accept };
     const struct fd_handler mgmt_passive  = { .handle_read = mgmt_passive_accept };
-
+    //we pass the selector, the fd of the passive socket, the handler and the interest (OP_READ) to the selector_register function, so it can register the passive socket and call the handler when a new connection is accepted
     ss = selector_register(selector, socks_fd, &socks_passive, OP_READ, NULL);
     if (ss != SELECTOR_SUCCESS) {
         err_msg = "no se pudo registrar el socket pasivo SOCKS";
