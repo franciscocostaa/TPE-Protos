@@ -10,7 +10,7 @@ struct users
     char* name;
     char* pass;
 };
-
+//this structs represents the socks5 arguments that can be passed to the program, it is used to store the parsed arguments from the command line
 struct socks5args
 {
     char* socks_addr;

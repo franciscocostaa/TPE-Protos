@@ -17,7 +17,7 @@
 struct config {
     bool     auth_required;       /* false => se acepta el método NO-AUTH */
     bool     dissectors_enabled;  /* sniffer de credenciales (2ª entrega)  */
-    uint32_t io_buffer_size;      /* informativo por ahora                 */
+    uint32_t io_buffer_size;    
 };
 
 /** Inicializa la config global con los valores iniciales (típicamente de args). */

@@ -108,6 +108,8 @@ typedef enum {
  */
 #define INTEREST_OFF(FLAG, MASK)  ( (FLAG) & ~(MASK) )
 
+
+// fucking pretty how it sets the struct, and then uses it to declare the handlers parameters, i like it, its very clean and readable
 /**
  * Argumento de todas las funciones callback del handler
  */
@@ -156,6 +158,7 @@ selector_register(fd_selector        s,
 
 /**
  * desregistra un file descriptor del selector
+ * devuelve SELECTOR_SUCCESS si fue exitoso, o un error si no.
  */
 selector_status
 selector_unregister_fd(fd_selector   s,
@@ -165,7 +168,9 @@ selector_unregister_fd(fd_selector   s,
 selector_status
 selector_set_interest(fd_selector s, int fd, fd_interest i);
 
-/** permite cambiar los intereses para un file descriptor */
+/** permite cambiar los intereses para un file descriptor
+ * its a wrapper, so you dont have to put selector_set_interest(key->s, key->fd, OP_WRITE); 
+ */
 selector_status
 selector_set_interest_key(struct selector_key *key, fd_interest i);
 

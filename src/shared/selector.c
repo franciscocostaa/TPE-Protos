@@ -21,7 +21,9 @@
 
 #define ERROR_DEFAULT_MSG "something failed"
 
-/** retorna una descripción humana del fallo */
+/** retorna una descripción humana del fallo 
+ * HERMOSO
+*/
 const char *
 selector_error(const selector_status status) {
     const char *msg;
@@ -140,7 +142,7 @@ struct fdselector {
 
     /** descriptores prototipicos ser usados en select */
     fd_set master_r, master_w;
-    /** para ser usado en el select() (recordar que select cambia el valor) */
+    /** para ser usado en el select() (recordar que select cambia el valor) LO VIMOS EN SO :)*/
     fd_set  slave_r,  slave_w;
 
     /** timeout prototipico para usar en select() */
@@ -353,7 +355,7 @@ selector_register(fd_selector        s,
     }
 
     // 2. registración
-    struct item * item = s->fds + ufd;
+    struct item * item = s->fds + ufd; //same as s->fds[ufd]
     if(ITEM_USED(item)) {
         ret = SELECTOR_FDINUSE;
         goto finally;
@@ -467,7 +469,7 @@ handle_iteration(fd_selector s) {
                     }
                 }
             }
-            if(FD_ISSET(i, &s->slave_w)) {
+            if(FD_ISSET(i, &s->slave_w)) { //para consistencia pondria FD_ISSET(item->fd, &s->slave_w) pero es lo mismo
                 if(OP_WRITE & item->interest) {
                     if(0 == item->handler->handle_write) {
                         assert(("OP_WRITE arrived but no handler. bug!" == 0));
@@ -504,7 +506,8 @@ handle_block_notifications(fd_selector s) {
     pthread_mutex_unlock(&s->resolution_mutex);
 }
 
-
+//this is the only function that can be called from another thread to notify the selector that a blocking job has finished
+//i should come back to read it again
 selector_status
 selector_notify_block(fd_selector  s,
                  const int    fd) {

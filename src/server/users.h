@@ -14,7 +14,7 @@
  * avisar al grupo.
  */
 
-#define USERS_MAX       10
+#define USERS_MAX       10 //TODO: deberia ser 500 no?
 #define USERS_NAME_MAX  255   /* ULEN máximo en RFC 1929 */
 #define USERS_PASS_MAX  255   /* PLEN máximo en RFC 1929 */
 
