@@ -35,4 +35,18 @@ clean:
 	rm -rf $(OUTPUT_FOLDER)
 	rm -rf $(OBJECTS_FOLDER)
 
-.PHONY: all server client clean
+# ---- tests ---------------------------------------------------------------
+# Harness propio (sin CUnit/check). El test incluye la unidad bajo prueba como
+# fuente y se enlaza contra los módulos puros que consume (metrics/users/config)
+# + la infra compartida.
+MGMT_TEST_BIN=$(OUTPUT_FOLDER)/mgmt_cmd_test
+MGMT_TEST_DEPS=obj/server/metrics.o obj/server/users.o obj/server/config.o
+
+test: $(MGMT_TEST_BIN)
+	./$(MGMT_TEST_BIN)
+
+$(MGMT_TEST_BIN): test/mgmt_cmd_test.c $(MGMT_TEST_DEPS) $(SHARED_OBJECTS)
+	mkdir -p $(OUTPUT_FOLDER)
+	$(COMPILER) $(COMPILER_FLAGS) test/mgmt_cmd_test.c $(MGMT_TEST_DEPS) $(SHARED_OBJECTS) -o $(MGMT_TEST_BIN)
+
+.PHONY: all server client clean test

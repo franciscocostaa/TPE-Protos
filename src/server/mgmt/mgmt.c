@@ -27,11 +27,25 @@
 #include "mgmt/mgmt_proto.h"
 #include "buffer.h"
 #include "stm.h"
+#include "users.h"
 
 /** El buffer de lectura debe poder contener una línea completa (CRLF incluido). */
 #define MGMT_READ_BUFFER_SIZE  MGMT_LINE_MAX
 /** Holgado para respuestas (incluidas las multilínea chicas de MF1). */
 #define MGMT_WRITE_BUFFER_SIZE 4096
+
+/*
+ * Guarda de tamaño: la respuesta multilínea más grande hoy es LIST-USERS. Peor
+ * caso = encabezado + USERS_MAX líneas (cada una: 1 byte de dot-stuffing +
+ * USERS_NAME_MAX + CRLF) + el terminador ".". Si alguien sube USERS_MAX y la
+ * respuesta deja de entrar en el write buffer, el build FALLA acá en vez de
+ * truncar en silencio (hallazgo #6 del review). El fix de fondo sería streamear
+ * la respuesta multilínea a medida que el buffer se drena.
+ */
+_Static_assert(
+    MGMT_WRITE_BUFFER_SIZE >= 64 + USERS_MAX * (1 + USERS_NAME_MAX + 2) + 3,
+    "MGMT_WRITE_BUFFER_SIZE no alcanza para LIST-USERS con USERS_MAX usuarios: "
+    "subir el buffer o implementar streaming de respuestas multilinea");
 
 /** Estados de la máquina. El último (MGMT_ERROR) es `max_state` para el stm. */
 enum mgmt_state {

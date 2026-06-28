@@ -124,6 +124,21 @@ read_print_response(int fd, bool multiline) {
     }
 }
 
+/**
+ * ¿La cadena contiene CR o LF? Un argumento con esos bytes inyectaría líneas
+ * extra en el protocolo (command smuggling), así que se rechaza antes de armar
+ * el comando.
+ */
+static bool
+has_crlf(const char *s) {
+    for (; *s != '\0'; s++) {
+        if (*s == '\r' || *s == '\n') {
+            return true;
+        }
+    }
+    return false;
+}
+
 /** Envía `s` completo por el socket bloqueante. Devuelve true si lo logró. */
 static bool
 send_all(int fd, const char *s) {
@@ -158,6 +173,18 @@ main(int argc, char *argv[]) {
     if (cmd_idx >= argc) {
         fprintf(stderr, "uso: %s <host> <port> [-t <token>] <VERB> [args...]\n", argv[0]);
         return EXIT_FAILURE;
+    }
+
+    /* Ningún argumento (ni el token) puede traer CR/LF: rompería el framing. */
+    if (token != NULL && has_crlf(token)) {
+        fprintf(stderr, "client: el token no puede contener CR/LF\n");
+        return EXIT_FAILURE;
+    }
+    for (int i = cmd_idx; i < argc; i++) {
+        if (has_crlf(argv[i])) {
+            fprintf(stderr, "client: los argumentos no pueden contener CR/LF\n");
+            return EXIT_FAILURE;
+        }
     }
 
     const int fd = tcp_connect(host, port);

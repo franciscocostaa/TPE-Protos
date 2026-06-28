@@ -11,6 +11,7 @@
 #include "mgmt/mgmt_cmd.h"
 #include "metrics.h"
 #include "users.h"
+#include "config.h"
 
 /** Máximo de tokens que parseamos de una línea (verbo + hasta 3 argumentos). */
 #define MGMT_CMD_MAX_ARGS 4
@@ -236,6 +237,58 @@ cmd_del_user(int argc, char *argv[], buffer *out) {
     return MGMT_DISP_CONTINUE;
 }
 
+/** Interpreta "on"/"off" en *out. Devuelve false si no es ninguno de los dos. */
+static bool
+parse_bool(const char *s, bool *out) {
+    if (strcmp(s, MGMT_BOOL_ON) == 0) {
+        *out = true;
+        return true;
+    }
+    if (strcmp(s, MGMT_BOOL_OFF) == 0) {
+        *out = false;
+        return true;
+    }
+    return false;
+}
+
+static mgmt_disposition
+cmd_get_config(int argc, char *argv[], buffer *out) {
+    (void) argv;
+    if (argc != 1) {
+        mgmt_cmd_emit_error(out, MGMT_ERR_INVALID_ARG, "GET-CONFIG takes no arguments");
+        return MGMT_DISP_CONTINUE;
+    }
+    const struct config cfg = config_get();
+    char scratch[MGMT_CMD_SCRATCH];
+    snprintf(scratch, sizeof(scratch), "%s %s=%s%s",
+             MGMT_RESP_OK,
+             MGMT_CFGKEY_AUTH_REQUIRED, cfg.auth_required ? MGMT_BOOL_ON : MGMT_BOOL_OFF,
+             MGMT_CRLF);
+    emit_str(out, scratch);
+    return MGMT_DISP_CONTINUE;
+}
+
+static mgmt_disposition
+cmd_set_config(int argc, char *argv[], buffer *out) {
+    if (argc != 3) {
+        mgmt_cmd_emit_error(out, MGMT_ERR_INVALID_ARG, "usage: SET-CONFIG <key> <on|off>");
+        return MGMT_DISP_CONTINUE;
+    }
+    const char *key = argv[1];
+    if (strcmp(key, MGMT_CFGKEY_AUTH_REQUIRED) != 0) {
+        mgmt_cmd_emit_error(out, MGMT_ERR_UNKNOWN_KEY, "unknown config key");
+        return MGMT_DISP_CONTINUE;
+    }
+    bool value;
+    if (!parse_bool(argv[2], &value)) {
+        mgmt_cmd_emit_error(out, MGMT_ERR_INVALID_ARG, "value must be on or off");
+        return MGMT_DISP_CONTINUE;
+    }
+    config_set_auth_required(value);
+    emit_str(out, MGMT_RESP_OK " config updated" MGMT_CRLF);
+    return MGMT_DISP_CONTINUE;
+}
+
 static mgmt_disposition
 cmd_help(buffer *out) {
     emit_str(out, MGMT_RESP_OK " available commands" MGMT_CRLF);
@@ -244,6 +297,8 @@ cmd_help(buffer *out) {
     emit_str(out, MGMT_CMD_LIST_USERS  MGMT_CRLF);
     emit_str(out, MGMT_CMD_ADD_USER    MGMT_CRLF);
     emit_str(out, MGMT_CMD_DEL_USER    MGMT_CRLF);
+    emit_str(out, MGMT_CMD_GET_CONFIG  MGMT_CRLF);
+    emit_str(out, MGMT_CMD_SET_CONFIG  MGMT_CRLF);
     emit_str(out, MGMT_CMD_HELP        MGMT_CRLF);
     emit_str(out, MGMT_CMD_QUIT        MGMT_CRLF);
     emit_str(out, MGMT_MULTILINE_END   MGMT_CRLF);
@@ -299,6 +354,12 @@ mgmt_cmd_dispatch(struct mgmt_session *session, char *line, buffer *out) {
     }
     if (strcasecmp(verb, MGMT_CMD_DEL_USER) == 0) {
         return cmd_del_user(argc, argv, out);
+    }
+    if (strcasecmp(verb, MGMT_CMD_GET_CONFIG) == 0) {
+        return cmd_get_config(argc, argv, out);
+    }
+    if (strcasecmp(verb, MGMT_CMD_SET_CONFIG) == 0) {
+        return cmd_set_config(argc, argv, out);
     }
 
     mgmt_cmd_emit_error(out, MGMT_ERR_UNKNOWN_CMD, "unknown command");

@@ -79,7 +79,6 @@
  * ------------------------------------------------------------------ */
 
 #define MGMT_CFGKEY_AUTH_REQUIRED "auth-required" /* on|off */
-#define MGMT_CFGKEY_DISSECTORS    "dissectors"    /* on|off */
 
 #define MGMT_BOOL_ON  "on"
 #define MGMT_BOOL_OFF "off"

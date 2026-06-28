@@ -205,7 +205,7 @@ Devuelve la configuración mutable actual. Respuesta de una línea, `clave=valor
 valores booleanos `on`/`off`:
 
 ```
-+OK auth-required=on dissectors=off
++OK auth-required=on
 ```
 
 ### 5.7 `SET-CONFIG <key> <value>` **[A]**
@@ -215,13 +215,15 @@ Cambia un parámetro de configuración en runtime.
 | key | value | efecto |
 |---|---|---|
 | `auth-required` | `on` / `off` | exige (o no) autenticación user/pass en el proxy SOCKS |
-| `dissectors`    | `on` / `off` | habilita el sniffer de credenciales (2ª entrega) |
 
 - Éxito: `+OK config updated`
 - Clave desconocida: `-ERR 9 unknown config key`
 - Valor inválido (no `on`/`off`): `-ERR 5 invalid arguments`
 
-Mapea a `config_set_auth_required()` / `config_set_dissectors()`.
+Mapea a `config_set_auth_required()`.
+
+> Nota de alcance: esta implementación cubre la **primera entrega**. El sniffer de
+> credenciales (clave `dissectors`, consigna F10) es de la segunda entrega y queda fuera.
 
 ### 5.8 `GET-LOG` **[A]**
 
