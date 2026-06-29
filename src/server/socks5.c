@@ -30,6 +30,8 @@
 #include "selector.h"
 #include "socks5.h"
 #include "metrics.h"
+#include "users.h"
+#include "config.h"
 
 /** cantidad máxima de estructuras `socks5` cacheadas para reuso */
 #define SOCKS5_POOL_MAX 50
@@ -38,10 +40,17 @@
 #define SOCKS5_FQDN_MAX 0xFF
 #define SOCKS5_PORT_STR_MAX 6   /* "65535" + '\0' */
 
+/** constantes de la subnegociación username/password (RFC 1929) */
+#define SOCKS5_AUTH_VERSION 0x01
+#define SOCKS5_AUTH_SUCCESS 0x00
+#define SOCKS5_AUTH_FAILURE 0x01
+
 /** estados de la máquina (el orden DEBE coincidir con el índice en la tabla) */
 enum socks5_state {
     HELLO_READ = 0,
     HELLO_WRITE,
+    AUTH_READ,
+    AUTH_WRITE,
     REQUEST_READ,
     REQUEST_RESOLV,
     REQUEST_CONNECTING,
@@ -88,6 +97,11 @@ struct socks5 {
     /* código REP a informar al cliente en la respuesta del request */
     uint8_t                 reply_status;
 
+    /* resultado de la autenticación RFC 1929; username se usa luego para logs */
+    char                    username[USERS_NAME_MAX + 1];
+    bool                    authenticated;
+    bool                    auth_success;
+
     /* máquina de estados */
     struct state_machine    stm;
 
@@ -133,6 +147,7 @@ static void     socks5_destroy(struct socks5 *s);
 static unsigned request_connect       (fd_selector s, struct socks5 *st);
 static void     request_marshall_reply(struct socks5 *s);
 static void     copy_init             (struct socks5 *s);
+static bool     auth_marshall_reply   (struct socks5 *s, uint8_t status);
 
 /** handler que usan tanto el client_fd como el origin_fd */
 static const struct fd_handler socks5_handler = {
@@ -331,17 +346,29 @@ hello_read(struct selector_key *key) {
         return HELLO_READ;          // faltan métodos por llegar
     }
 
-    bool no_auth = false;
+    bool no_auth   = false;
+    bool user_pass = false;
     for (uint8_t i = 0; i < nmethods; i++) {
         if (data[2 + i] == SOCKS5_METHOD_NO_AUTH) {
             no_auth = true;
+        } else if (data[2 + i] == SOCKS5_METHOD_USER_PASS) {
+            user_pass = true;
         }
     }
     //ahora si muevo el puntero de lectura del buffer, porque ya leímos el saludo completo
     buffer_read_adv(b, 2 + nmethods);
 
-    //TODO: deberiamos poder aceptar metodo user, pass
-    const uint8_t method = no_auth ? SOCKS5_METHOD_NO_AUTH : SOCKS5_METHOD_NO_ACCEPTABLE;
+    const struct config cfg = config_get();
+    uint8_t method = SOCKS5_METHOD_NO_ACCEPTABLE;
+    if (cfg.auth_required) {
+        /* Si la config exige autenticación, no aceptamos NO-AUTH aunque el cliente lo ofrezca. */
+        method = user_pass ? SOCKS5_METHOD_USER_PASS : SOCKS5_METHOD_NO_ACCEPTABLE;
+    } else if (no_auth) {
+        /* Cuando no se exige auth, preferimos el método más simple y compatible. */
+        method = SOCKS5_METHOD_NO_AUTH;
+    } else if (user_pass) {
+        method = SOCKS5_METHOD_USER_PASS;
+    }
     s->client.hello.method = method;
 
     // preparamos la respuesta VER + METHOD
@@ -377,6 +404,125 @@ hello_write(struct selector_key *key) {
     }
     if (s->client.hello.method == SOCKS5_METHOD_NO_ACCEPTABLE) {
         return ERROR;               // no aceptamos ningún método del cliente
+    }
+    selector_set_interest_key(key, OP_READ);
+    if (s->client.hello.method == SOCKS5_METHOD_USER_PASS) {
+        return AUTH_READ;
+    }
+    //situacion no auth, entonces pasamos a leer el request del cliente
+    return REQUEST_READ;
+}
+
+/* ---- AUTH (subnegociación username/password, RFC 1929) ------------------- */
+
+static bool
+auth_marshall_reply(struct socks5 *s, uint8_t status) {
+    buffer *b = &s->write_buffer;
+    buffer_reset(b);
+
+    size_t   space;
+    uint8_t *p = buffer_write_ptr(b, &space);
+    if (space < 2) {
+        return false;
+    }
+    p[0] = SOCKS5_AUTH_VERSION;
+    p[1] = status;
+    buffer_write_adv(b, 2);
+    return true;
+}
+
+static unsigned
+auth_read(struct selector_key *key) {
+    struct socks5 *s = ATTACHMENT(key);
+    buffer        *b = &s->read_buffer;
+
+    size_t   space;
+    uint8_t *ptr = buffer_write_ptr(b, &space);
+    if (space == 0) {
+        return ERROR;
+    }
+    const ssize_t n = recv(key->fd, ptr, space, 0);
+    if (n <= 0) {
+        return ERROR;
+    }
+    buffer_write_adv(b, n);
+
+    size_t   avail;
+    uint8_t *data = buffer_read_ptr(b, &avail);
+    if (avail < 2) {
+        return AUTH_READ;           // faltan VER y ULEN
+    }
+
+    const uint8_t ver  = data[0];
+    const uint8_t ulen = data[1];
+    if (ver != SOCKS5_AUTH_VERSION || ulen == 0) {
+        s->auth_success = false;
+        if (!auth_marshall_reply(s, SOCKS5_AUTH_FAILURE)) {
+            return ERROR;
+        }
+        selector_set_interest_key(key, OP_WRITE);
+        return AUTH_WRITE;
+    }
+
+    /* El paquete RFC 1929 trae PLEN recién después de UNAME. Esperamos hasta
+     * tener ese byte para calcular el largo total sin leer fuera del buffer. */
+    if (avail < (size_t)(2 + ulen + 1)) {
+        return AUTH_READ;
+    }
+
+    const uint8_t plen = data[2 + ulen];
+    if (plen == 0) {
+        s->auth_success = false;
+        if (!auth_marshall_reply(s, SOCKS5_AUTH_FAILURE)) {
+            return ERROR;
+        }
+        selector_set_interest_key(key, OP_WRITE); //avisame cuando ewsta listo el cliente para que le escriba
+        return AUTH_WRITE;
+    }
+
+    const size_t needed = 2 + ulen + 1 + plen;
+    if (avail < needed) {
+        return AUTH_READ;           // faltan bytes de password
+    }
+
+    char username[USERS_NAME_MAX + 1];
+    char password[USERS_PASS_MAX + 1];
+    memcpy(username, &data[2], ulen);
+    username[ulen] = '\0';
+    memcpy(password, &data[2 + ulen + 1], plen);
+    password[plen] = '\0';
+
+    s->auth_success = users_authenticate(username, password);
+    s->authenticated = s->auth_success;
+    if (s->auth_success) {
+        strncpy(s->username, username, sizeof(s->username) - 1);
+    }
+    buffer_read_adv(b, needed);
+
+    if (!auth_marshall_reply(s, s->auth_success ? SOCKS5_AUTH_SUCCESS : SOCKS5_AUTH_FAILURE)) {
+        return ERROR;
+    }
+    selector_set_interest_key(key, OP_WRITE);
+    return AUTH_WRITE;
+}
+
+static unsigned
+auth_write(struct selector_key *key) {
+    struct socks5 *s = ATTACHMENT(key);
+    buffer        *b = &s->write_buffer;
+
+    size_t   size;
+    uint8_t *ptr = buffer_read_ptr(b, &size);
+    const ssize_t n = send(key->fd, ptr, size, 0);
+    if (n == -1) {
+        return ERROR;
+    }
+    buffer_read_adv(b, n);
+    if (buffer_can_read(b)) {
+        return AUTH_WRITE;          // respuesta de auth parcialmente escrita
+    }
+    if (!s->auth_success) {
+        return ERROR;               // RFC 1929: tras failure cerramos la conexión
     }
     selector_set_interest_key(key, OP_READ);
     return REQUEST_READ;
@@ -419,8 +565,8 @@ request_parse(struct selector_key *key) {
             break;
         default:
             s->reply_status = SOCKS5_REP_ATYP_NOT_SUPPORTED;
-            request_marshall_reply(s);
-            selector_set_interest_key(key, OP_WRITE);
+            request_marshall_reply(s); // Arma en el write_buffer la respuesta SOCKS5 del request.
+            selector_set_interest_key(key, OP_WRITE); //espero que el fed del cliente este listo para recibir la respuesta de error
             return REQUEST_WRITE;
     }
     if (avail < needed) {
@@ -435,7 +581,7 @@ request_parse(struct selector_key *key) {
         selector_set_interest_key(key, OP_WRITE);
         return REQUEST_WRITE;
     }
-
+    //es connect, entonces vamos a extraer el host y el puerto del request, para eso necesitamos leer el buffer de lectura, y dependiendo del tipo de dirección (atyp) vamos a extraer los bytes correspondientes al host y al puerto
     // extraemos host y puerto como strings para getaddrinfo
     char       host[SOCKS5_FQDN_MAX + 1];
     in_port_t  port_net;
@@ -460,11 +606,11 @@ request_parse(struct selector_key *key) {
     }
     buffer_read_adv(b, needed);
     snprintf(s->dest_port, sizeof(s->dest_port), "%u", ntohs(port_net));
-
+    //si es un dominio entonces tenemos que resolverlo en otro hilo, porque getaddrinfo puede bloquear, entonces vamos a pasar al estado REQUEST_RESOLV y vamos a crear un hilo que haga la resolución de DNS y cuando termine nos va a avisar con selector_notify_block
     if (is_domain) {
         // resolución asíncrona en otro hilo
         strncpy(s->dest_fqdn, host, sizeof(s->dest_fqdn) - 1);
-        selector_set_interest_key(key, OP_NOOP);
+        selector_set_interest_key(key, OP_NOOP); //avisame cuando termine la resolución de DNS, no quiero seguir leyendo ni escribiendo hasta que termine la resolución
         return REQUEST_RESOLV;
     }
 
@@ -530,8 +676,8 @@ request_resolv_blocking(void *arg) {
 static void
 request_resolv_init(const unsigned state, struct selector_key *key) {
     (void) state;
-    struct selector_key *blocking_key = malloc(sizeof(*blocking_key));
-    if (blocking_key == NULL) {
+    struct selector_key *blocking_key = malloc(sizeof(*blocking_key)); //creamos una copia de la key para pasarla al hilo, porque el hilo va a necesitar la key para notificar al selector cuando termine la resolución de DNS
+    if (blocking_key == NULL) {//malloc falló, no podemos lanzar el hilo, entonces no podemos resolver el DNS, entonces ponemos origin_resolution en NULL y notificamos al selector que despierte para que maneje el error
         // sin poder lanzar el hilo, despertamos sin resolución -> error.
         ATTACHMENT(key)->origin_resolution = NULL;
         selector_notify_block(key->s, key->fd);
@@ -540,6 +686,7 @@ request_resolv_init(const unsigned state, struct selector_key *key) {
     *blocking_key = *key;
 
     pthread_t tid;
+    //crea el hilo que va a ejecutar la función request_resolv_blocking, que va a hacer la resolución de DNS y cuando termine va a notificar al selector que despierte para que maneje el resultado de la resolución
     if (pthread_create(&tid, NULL, request_resolv_blocking, blocking_key) != 0) {
         free(blocking_key);
         ATTACHMENT(key)->origin_resolution = NULL;
@@ -795,6 +942,12 @@ static const struct state_definition socks5_states[] = {
     }, {
         .state          = HELLO_WRITE,
         .on_write_ready = hello_write,
+    }, {
+        .state         = AUTH_READ,
+        .on_read_ready = auth_read,
+    }, {
+        .state          = AUTH_WRITE,
+        .on_write_ready = auth_write,
     }, {
         .state         = REQUEST_READ,
         .on_read_ready = request_read,
