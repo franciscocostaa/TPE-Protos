@@ -8,16 +8,18 @@
 
 #include "users.h"
 
+// we store the usernames in struct user_entry, which contains the username and password, and a flag indicating if the entry is in use
 struct user_entry {
     bool in_use;
     char name[USERS_NAME_MAX + 1];
     char pass[USERS_PASS_MAX + 1];
 };
 
-static struct user_entry users[USERS_MAX];
+static struct user_entry users[USERS_MAX]; 
 
 void
 users_init(void) {
+    //we put all the entries in the users array to 0, which means they are not in use
     memset(users, 0, sizeof(users));
 }
 

@@ -27,7 +27,7 @@
 #include "metrics.h"
 #include "config.h"
 
-#define MAX_PENDING_CONNECTIONS   20
+#define MAX_PENDING_CONNECTIONS   20 //maybe should be more, but for now is ok, we can change it later if we need to
 #define SELECTOR_INITIAL_ELEMENTS 1024
 #define SELECTOR_TIMEOUT_SECONDS  10
 
@@ -60,7 +60,7 @@ create_passive_socket(const unsigned short port, const char **err_msg) {
     addr.sin6_addr   = in6addr_any;
     addr.sin6_port   = htons(port);
 
-    const int fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    const int fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);  //so when we use this fd the kernel uses this number to locate the socket in the kernel space, and then it uses the socket to send and receive data from the network
     if (fd < 0) {
         *err_msg = "no se pudo crear el socket pasivo";
         return -1;
@@ -70,12 +70,12 @@ create_passive_socket(const unsigned short port, const char **err_msg) {
     /* Forzamos dual-stack explícito (en algunas plataformas viene v6-only). */
     setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &(int){0}, sizeof(int));
 
-    if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
+    if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) { //with bind we associate the socket with the address and port, so the kernel knows that when a packet arrives for that address and port, it should be delivered to this socket
         *err_msg = "fallo en bind()";
         close(fd);
         return -1;
     }
-    if (listen(fd, MAX_PENDING_CONNECTIONS) < 0) {
+    if (listen(fd, MAX_PENDING_CONNECTIONS) < 0) { //maybe we should change 
         *err_msg = "fallo en listen()";
         close(fd);
         return -1;
@@ -86,6 +86,7 @@ create_passive_socket(const unsigned short port, const char **err_msg) {
         return -1;
     }
     return fd;
+    
 }
 
 int
@@ -93,7 +94,7 @@ main(const int argc, char **argv) {
     struct socks5args args;
     parse_args(argc, argv, &args);
 
-    /* Inicialización de los módulos compartidos (ver docs/PLAN.md §3). */
+    /* Inicialización de los módulos compartidos (ver docs/PLAN.md). */
     users_init();
     metrics_init();
     for (int i = 0; i < MAX_USERS; i++) {
@@ -103,9 +104,9 @@ main(const int argc, char **argv) {
     }
     const struct config initial_cfg = {
         /* si se cargaron usuarios, por defecto exigimos autenticación */
-        .auth_required      = users_count() > 0,
-        .dissectors_enabled = args.disectors_enabled,
-        .io_buffer_size     = SOCKS5_BUFFER_SIZE,
+        .auth_required      = users_count() > 0, //check if this approach is right
+        .dissectors_enabled = args.disectors_enabled, //think its for the second part of the project, but we can leave it as is
+        .io_buffer_size     = SOCKS5_BUFFER_SIZE, 
     };
     config_init(&initial_cfg);
 
@@ -121,7 +122,7 @@ main(const int argc, char **argv) {
     fd_selector     selector    = NULL;
     int             socks_fd    = -1;
     int             mgmt_fd     = -1;
-    bool            accepting   = true;
+    bool            accepting   = true; //this is great for graceful shutdown, we can use it to stop accepting new connections when we receive a signal
 
     socks_fd = create_passive_socket(args.socks_port, &err_msg);
     if (socks_fd < 0) {
@@ -141,7 +142,7 @@ main(const int argc, char **argv) {
     };
     if (selector_init(&conf) != 0) {
         err_msg = "no se pudo inicializar el selector";
-        goto finally;
+        goto finally; //marcelo wouldnt be proud about this :), i like it
     }
 
     selector = selector_new(SELECTOR_INITIAL_ELEMENTS);
@@ -149,10 +150,10 @@ main(const int argc, char **argv) {
         err_msg = "no se pudo crear el selector";
         goto finally;
     }
-
+    //this functions are the handlers for the passive sockets, they are called when a new connection is accepted
     const struct fd_handler socks_passive = { .handle_read = socksv5_passive_accept };
     const struct fd_handler mgmt_passive  = { .handle_read = mgmt_passive_accept };
-
+    //we pass the selector, the fd of the passive socket, the handler and the interest (OP_READ) to the selector_register function, so it can register the passive socket and call the handler when a new connection is accepted
     ss = selector_register(selector, socks_fd, &socks_passive, OP_READ, NULL);
     if (ss != SELECTOR_SUCCESS) {
         err_msg = "no se pudo registrar el socket pasivo SOCKS";

@@ -61,7 +61,7 @@ usage(const char* progname)
             "   -L <conf  addr>  Dirección donde servirá el servicio de management.\n"
             "   -p <SOCKS port>  Puerto entrante conexiones SOCKS.\n"
             "   -P <conf port>   Puerto entrante conexiones configuracion\n"
-            "   -u <name>:<pass> Usuario y contraseña de usuario que puede usar el proxy. Hasta 10.\n"
+            "   -u <name>:<pass> Usuario y contraseña de usuario que puede usar el proxy. Hasta 10.\n" //TODO:deberia ser 500 no?
             "   -v               Imprime información sobre la versión versión y termina.\n"
 
             "\n",

@@ -26,11 +26,11 @@ inline bool
 buffer_can_write(buffer *b) {
     return b->limit - b->write > 0;
 }
-
+//returns a pointer to the write position in the buffer and the number of bytes that can be written, if the write pointer is within the limit of the buffer
 inline uint8_t *
 buffer_write_ptr(buffer *b, size_t *nbyte) {
-    assert(b->write <= b->limit);
-    *nbyte = b->limit - b->write;
+    assert(b->write <= b->limit); //check if write pointer is within limit
+    *nbyte = b->limit - b->write; // in this pointer i have the number of bytes that can be written
     return b->write;
 }
 
@@ -39,10 +39,11 @@ buffer_can_read(buffer *b) {
     return b->write - b->read > 0;
 }
 
+//returns a pointer to the read position in the buffer and the number of bytes that can be read, if the read pointer is within the write pointer
 inline uint8_t *
 buffer_read_ptr(buffer *b, size_t *nbyte) {
-    assert(b->read <= b->write);
-    *nbyte = b->write - b->read;
+    assert(b->read <= b->write); // check if read pointer is within write pointer
+    *nbyte = b->write - b->read; // in this pointer i have the number of bytes that can be read
     return b->read;
 }
 
@@ -66,7 +67,7 @@ buffer_read_adv(buffer *b, const ssize_t bytes) {
         }
     }
 }
-
+//reads a byte from the buffer and advances the read pointer if there is data to read, otherwise returns 0
 inline uint8_t
 buffer_read(buffer *b) {
     uint8_t ret;
@@ -78,7 +79,7 @@ buffer_read(buffer *b) {
     }
     return ret;
 }
-
+//writes a byte to the buffer and advances the write pointer if there is space to write, otherwise does nothing
 inline void
 buffer_write(buffer *b, uint8_t c) {
     if(buffer_can_write(b)) {
@@ -96,7 +97,7 @@ buffer_compact(buffer *b) {
         b->write = b->data;
     } else {
         const size_t n = b->write - b->read;
-        memmove(b->data, b->read, n);
+        memmove(b->data, b->read, n); //this function is used to move the data from the read pointer to the beginning of the buffer
         b->read  = b->data;
         b->write = b->data + n;
     }

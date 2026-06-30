@@ -310,12 +310,13 @@ hello_read(struct selector_key *key) {
     if (space == 0) {
         return ERROR;   // saludo más grande que el buffer: cliente inválido
     }
+    //busco que se escriban bytes nuveos en el buffer, si no hay bytes nuevos, es porque el cliente cerró la conexión
     const ssize_t n = recv(key->fd, ptr, space, 0);
     if (n <= 0) {
         return ERROR;
     }
     buffer_write_adv(b, n);
-
+    //en esta parte lo q hago es consultar cuantos bytes hay disponibles para leer en el buffer, y si hay menos de 2, es porque faltan VER y NMETHODS, entonces devuelvo HELLO_READ
     size_t   avail;
     uint8_t *data = buffer_read_ptr(b, &avail);
     if (avail < 2) {
@@ -324,6 +325,7 @@ hello_read(struct selector_key *key) {
     if (data[0] != SOCKS5_VERSION) {
         return ERROR;
     }
+    // el saludo completo tiene: 2 bytes iniciales + nmethods bytes
     const uint8_t nmethods = data[1];
     if (avail < (size_t)(2 + nmethods)) {
         return HELLO_READ;          // faltan métodos por llegar
@@ -335,8 +337,10 @@ hello_read(struct selector_key *key) {
             no_auth = true;
         }
     }
+    //ahora si muevo el puntero de lectura del buffer, porque ya leímos el saludo completo
     buffer_read_adv(b, 2 + nmethods);
 
+    //TODO: deberiamos poder aceptar metodo user, pass
     const uint8_t method = no_auth ? SOCKS5_METHOD_NO_AUTH : SOCKS5_METHOD_NO_ACCEPTABLE;
     s->client.hello.method = method;
 
@@ -348,8 +352,10 @@ hello_read(struct selector_key *key) {
     }
     w[0] = SOCKS5_VERSION;
     w[1] = method;
+    //con esta funcion, le aviso al buffer de escritura que acabo de cargar 2 bytes para enviar
     buffer_write_adv(&s->write_buffer, 2);
-
+    // le digo al selector: no qiuero seguir leyendo, quiero escribir la respuesta al saludo, entonces cambio el interest a OP_WRITE
+    //avisame cuando pueda escribirle la respuesta al cliente.
     selector_set_interest_key(key, OP_WRITE);
     return HELLO_WRITE;
 }
@@ -367,7 +373,7 @@ hello_write(struct selector_key *key) {
     }
     buffer_read_adv(b, n);
     if (buffer_can_read(b)) {
-        return HELLO_WRITE;         // faltan bytes por enviar
+        return HELLO_WRITE;         // faltan bytes por enviar, puede suceder que no se envien todos por eso
     }
     if (s->client.hello.method == SOCKS5_METHOD_NO_ACCEPTABLE) {
         return ERROR;               // no aceptamos ningún método del cliente
@@ -376,7 +382,7 @@ hello_write(struct selector_key *key) {
     return REQUEST_READ;
 }
 
-/* ---- REQUEST (pedido de conexión, RFC 1928 §4) --------------------------- */
+/* ---- REQUEST (pedido de conexión, RFC 1928) --------------------------- */
 
 /** intenta parsear el request acumulado en el buffer; tolera lecturas parciales */
 static unsigned
