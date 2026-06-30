@@ -924,6 +924,7 @@ copy_write(struct selector_key *key) {
         }
     } else {
         buffer_read_adv(c->wb, n);
+        metrics_add_bytes((uint64_t)n);
     }
     copy_compute_interests(key->s, c);
     copy_compute_interests(key->s, c->other);
