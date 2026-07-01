@@ -32,6 +32,8 @@
 #include "metrics.h"
 #include "users.h"
 #include "config.h"
+#include "access_log.h"
+#include "netutils.h"
 
 /** cantidad máxima de estructuras `socks5` cacheadas para reuso */
 #define SOCKS5_POOL_MAX 50
@@ -606,10 +608,13 @@ request_parse(struct selector_key *key) {
     }
     buffer_read_adv(b, needed);
     snprintf(s->dest_port, sizeof(s->dest_port), "%u", ntohs(port_net));
+    /* Guardamos el destino pedido (FQDN o IP literal) para el registro de
+     * accesos; si es dominio también se usa para la resolución DNS. */
+    strncpy(s->dest_fqdn, host, sizeof(s->dest_fqdn) - 1);
+    s->dest_fqdn[sizeof(s->dest_fqdn) - 1] = '\0';
     //si es un dominio entonces tenemos que resolverlo en otro hilo, porque getaddrinfo puede bloquear, entonces vamos a pasar al estado REQUEST_RESOLV y vamos a crear un hilo que haga la resolución de DNS y cuando termine nos va a avisar con selector_notify_block
     if (is_domain) {
         // resolución asíncrona en otro hilo
-        strncpy(s->dest_fqdn, host, sizeof(s->dest_fqdn) - 1);
         selector_set_interest_key(key, OP_NOOP); //avisame cuando termine la resolución de DNS, no quiero seguir leyendo ni escribiendo hasta que termine la resolución
         return REQUEST_RESOLV;
     }
@@ -783,6 +788,23 @@ connecting_write(struct selector_key *key) {
 
 /* ---- REQUEST_WRITE (respuesta al cliente, RFC 1928 §6) ------------------- */
 
+/**
+ * Registra el acceso en el access_log (consigna F8). Se llama una vez por
+ * conexión, cuando ya se decidió el REP final (éxito o error). El client_addr se
+ * pasa a texto humano con netutils; s->username queda "" en conexiones NO-AUTH,
+ * y access_log lo muestra como '-'.
+ */
+static void
+log_access(struct socks5 *s) {
+    char client[SOCKADDR_TO_HUMAN_MIN];
+    sockaddr_to_human(client, sizeof(client), (struct sockaddr *) &s->client_addr);
+    access_log_record(s->username[0]  != '\0' ? s->username  : NULL,
+                      client,
+                      s->dest_fqdn[0] != '\0' ? s->dest_fqdn : NULL,
+                      (uint16_t) strtol(s->dest_port, NULL, 10),
+                      s->reply_status);
+}
+
 /** arma la respuesta del request en write_buffer (VER REP RSV ATYP BND.ADDR PORT) */
 static void
 request_marshall_reply(struct socks5 *s) {
@@ -818,6 +840,9 @@ request_marshall_reply(struct socks5 *s) {
         memset(&p[i], 0, 4 + 2); i += 4 + 2;
     }
     buffer_write_adv(b, i);
+
+    /* La respuesta ya está decidida: registramos el acceso (consigna F8). */
+    log_access(s);
 }
 
 static unsigned

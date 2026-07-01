@@ -26,6 +26,7 @@
 #include "users.h"
 #include "metrics.h"
 #include "config.h"
+#include "access_log.h"
 
 #define MAX_PENDING_CONNECTIONS   20 //maybe should be more, but for now is ok, we can change it later if we need to
 #define SELECTOR_INITIAL_ELEMENTS 1024
@@ -97,6 +98,7 @@ main(const int argc, char **argv) {
     /* Inicialización de los módulos compartidos (ver docs/PLAN.md). */
     users_init();
     metrics_init();
+    access_log_init();
     for (int i = 0; i < MAX_USERS; i++) {
         if (args.users[i].name != NULL) {
             users_add(args.users[i].name, args.users[i].pass);
