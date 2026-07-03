@@ -549,6 +549,9 @@ request_parse(struct selector_key *key) {
     if (ver != SOCKS5_VERSION) {
         return ERROR;
     }
+    if (d[2] != 0x00) {
+        return ERROR;               // RSV DEBE ser 0x00 (RFC 1928 §4)
+    }
 
     // longitud total del request según el tipo de dirección
     size_t needed;
@@ -716,6 +719,18 @@ request_resolv_done(struct selector_key *key) {
 
 /* ---- CONNECTING (conexión no bloqueante con fallback de direcciones) ------ */
 
+/** Traduce el errno de un connect() fallido al REP más específico (RFC 1928 §6). */
+static uint8_t
+errno_to_rep(const int e) {
+    switch (e) {
+        case ECONNREFUSED: return SOCKS5_REP_CONNECTION_REFUSED;   /* 0x05 */
+        case ENETUNREACH:  return SOCKS5_REP_NETWORK_UNREACHABLE;  /* 0x03 */
+        case EHOSTUNREACH: return SOCKS5_REP_HOST_UNREACHABLE;     /* 0x04 */
+        case ETIMEDOUT:    return SOCKS5_REP_HOST_UNREACHABLE;     /* 0x04 (no hay REP de timeout) */
+        default:           return SOCKS5_REP_GENERAL_FAILURE;      /* 0x01 */
+    }
+}
+
 /**
  * Intenta conectar a la próxima dirección candidata. Si una falla, prueba con
  * la siguiente (robustez ante FQDN con varias IPs). Registra el origin_fd con
@@ -749,12 +764,16 @@ request_connect(fd_selector s, struct socks5 *st) {
             selector_set_interest(s, st->client_fd, OP_NOOP);
             return REQUEST_CONNECTING;
         }
+        /* connect() falló de inmediato: recordamos el motivo y probamos la siguiente */
+        st->reply_status = errno_to_rep(errno);
         close(st->origin_fd);
         st->origin_fd = -1;
     }
 
-    // ninguna dirección candidata funcionó
-    st->reply_status = SOCKS5_REP_HOST_UNREACHABLE;
+    // ninguna dirección candidata funcionó: informamos el REP más específico visto
+    if (st->reply_status == SOCKS5_REP_SUCCEEDED) {
+        st->reply_status = SOCKS5_REP_HOST_UNREACHABLE;
+    }
     request_marshall_reply(st);
     selector_set_interest(s, st->client_fd, OP_WRITE);
     return REQUEST_WRITE;
@@ -779,7 +798,8 @@ connecting_write(struct selector_key *key) {
         return REQUEST_WRITE;
     }
 
-    // esta dirección falló: la cerramos y probamos con la siguiente.
+    // esta dirección falló: recordamos el motivo, la cerramos y probamos la siguiente.
+    s->reply_status = errno_to_rep(error);
     selector_unregister_fd(key->s, s->origin_fd);
     close(s->origin_fd);
     s->origin_fd = -1;
@@ -915,15 +935,16 @@ copy_read(struct selector_key *key) {
     size_t   size;
     uint8_t *ptr = buffer_write_ptr(c->rb, &size);
     const ssize_t n = recv(key->fd, ptr, size, 0);
-    if (n <= 0) {
-        // EOF o error de lectura: cerramos esta lectura y la escritura del otro
+    if (n > 0) {
+        buffer_write_adv(c->rb, n);
+    } else if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+        // EOF (n==0) o error real: cerramos esta lectura y la escritura del otro.
+        // EAGAIN/EWOULDBLOCK/EINTR = "todavía no hay datos", no cerramos: reintentamos.
         c->duplex &= ~OP_READ;
         if (*c->other->fd != -1) {
             shutdown(*c->other->fd, SHUT_WR);
             c->other->duplex &= ~OP_WRITE;
         }
-    } else {
-        buffer_write_adv(c->rb, n);
     }
     copy_compute_interests(key->s, c);
     copy_compute_interests(key->s, c->other);
@@ -941,15 +962,17 @@ copy_write(struct selector_key *key) {
     size_t   size;
     uint8_t *ptr = buffer_read_ptr(c->wb, &size);
     const ssize_t n = send(key->fd, ptr, size, 0);
-    if (n == -1) {
+    if (n > 0) {
+        buffer_read_adv(c->wb, n);
+        metrics_add_bytes((uint64_t)n);
+    } else if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+        // error real de escritura: cerramos esta escritura y la lectura del otro.
+        // EAGAIN/EWOULDBLOCK/EINTR = "no se puede escribir ahora", no cerramos: reintentamos.
         c->duplex &= ~OP_WRITE;
         if (*c->other->fd != -1) {
             shutdown(*c->other->fd, SHUT_RD);
             c->other->duplex &= ~OP_READ;
         }
-    } else {
-        buffer_read_adv(c->wb, n);
-        metrics_add_bytes((uint64_t)n);
     }
     copy_compute_interests(key->s, c);
     copy_compute_interests(key->s, c->other);

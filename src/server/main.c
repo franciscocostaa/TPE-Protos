@@ -30,7 +30,7 @@
 #include "config.h"
 #include "access_log.h"
 
-#define MAX_PENDING_CONNECTIONS   20 //maybe should be more, but for now is ok, we can change it later if we need to
+#define MAX_PENDING_CONNECTIONS   128  /* backlog del listen(): banca ráfagas hacia las 500 conexiones */
 #define SELECTOR_INITIAL_ELEMENTS 1024
 #define SELECTOR_TIMEOUT_SECONDS  10
 
