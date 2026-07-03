@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include <sys/socket.h>
 
@@ -219,6 +220,9 @@ mgmt_on_greeting(struct selector_key *key) {
     uint8_t      *ptr = buffer_read_ptr(b, &size);
     const ssize_t n   = send(key->fd, ptr, size, 0);
     if (n == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            return MGMT_GREETING;        /* el socket no está listo: reintentamos */
+        }
         return MGMT_ERROR;
     }
     buffer_read_adv(b, n);
@@ -250,8 +254,14 @@ mgmt_on_read(struct selector_key *key) {
             return MGMT_WRITE;
         }
         const ssize_t n = recv(key->fd, ptr, space, 0);
-        if (n <= 0) {
-            return MGMT_DONE;            /* EOF del cliente o error de socket */
+        if (n == 0) {
+            return MGMT_DONE;            /* EOF: el cliente cerró */
+        }
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                return MGMT_READ;        /* todavía no hay datos: reintentamos */
+            }
+            return MGMT_DONE;            /* error real de socket */
         }
         buffer_write_adv(b, n);
 
@@ -282,6 +292,9 @@ mgmt_on_write(struct selector_key *key) {
     uint8_t      *ptr = buffer_read_ptr(b, &size);
     const ssize_t n   = send(key->fd, ptr, size, 0);
     if (n == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            return MGMT_WRITE;           /* el socket no está listo: reintentamos */
+        }
         return MGMT_ERROR;
     }
     buffer_read_adv(b, n);

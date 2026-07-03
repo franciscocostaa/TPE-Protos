@@ -262,9 +262,10 @@ cmd_get_config(int argc, char *argv[], buffer *out) {
     }
     const struct config cfg = config_get();
     char scratch[MGMT_CMD_SCRATCH];
-    snprintf(scratch, sizeof(scratch), "%s %s=%s%s",
+    snprintf(scratch, sizeof(scratch), "%s %s=%s %s=%s%s",
              MGMT_RESP_OK,
-             MGMT_CFGKEY_AUTH_REQUIRED, cfg.auth_required ? MGMT_BOOL_ON : MGMT_BOOL_OFF,
+             MGMT_CFGKEY_AUTH_REQUIRED, cfg.auth_required     ? MGMT_BOOL_ON : MGMT_BOOL_OFF,
+             MGMT_CFGKEY_DISSECTORS,    cfg.dissectors_enabled ? MGMT_BOOL_ON : MGMT_BOOL_OFF,
              MGMT_CRLF);
     emit_str(out, scratch);
     return MGMT_DISP_CONTINUE;
@@ -277,7 +278,8 @@ cmd_set_config(int argc, char *argv[], buffer *out) {
         return MGMT_DISP_CONTINUE;
     }
     const char *key = argv[1];
-    if (strcmp(key, MGMT_CFGKEY_AUTH_REQUIRED) != 0) {
+    if (strcmp(key, MGMT_CFGKEY_AUTH_REQUIRED) != 0
+            && strcmp(key, MGMT_CFGKEY_DISSECTORS) != 0) {
         mgmt_cmd_emit_error(out, MGMT_ERR_UNKNOWN_KEY, "unknown config key");
         return MGMT_DISP_CONTINUE;
     }
@@ -286,7 +288,11 @@ cmd_set_config(int argc, char *argv[], buffer *out) {
         mgmt_cmd_emit_error(out, MGMT_ERR_INVALID_ARG, "value must be on or off");
         return MGMT_DISP_CONTINUE;
     }
-    config_set_auth_required(value);
+    if (strcmp(key, MGMT_CFGKEY_AUTH_REQUIRED) == 0) {
+        config_set_auth_required(value);
+    } else {
+        config_set_dissectors(value);
+    }
     emit_str(out, MGMT_RESP_OK " config updated" MGMT_CRLF);
     return MGMT_DISP_CONTINUE;
 }
