@@ -36,17 +36,33 @@ clean:
 	rm -rf $(OBJECTS_FOLDER)
 
 # ---- tests ---------------------------------------------------------------
-# Harness propio (sin CUnit/check). El test incluye la unidad bajo prueba como
-# fuente y se enlaza contra los módulos puros que consume (metrics/users/config)
-# + la infra compartida.
+# Harness propio (sin CUnit/check, que no están garantizados en la máquina de
+# corrección). Cada test incluye la unidad bajo prueba como fuente para poder
+# ejercitar también sus funciones estáticas.
+#
+#  - Tests de módulos puros (users/metrics/config/access_log): autocontenidos,
+#    no necesitan enlazar nada más.
+#  - Test del dispatch de mgmt: enlaza los módulos que consume + la infra.
 MGMT_TEST_BIN=$(OUTPUT_FOLDER)/mgmt_cmd_test
-MGMT_TEST_DEPS=obj/server/metrics.o obj/server/users.o obj/server/config.o
+MGMT_TEST_DEPS=obj/server/metrics.o obj/server/users.o obj/server/config.o obj/server/access_log.o
 
-test: $(MGMT_TEST_BIN)
+UNIT_TESTS=$(OUTPUT_FOLDER)/users_test $(OUTPUT_FOLDER)/metrics_test \
+           $(OUTPUT_FOLDER)/config_test $(OUTPUT_FOLDER)/access_log_test
+
+test: $(UNIT_TESTS) $(MGMT_TEST_BIN)
+	./$(OUTPUT_FOLDER)/users_test
+	./$(OUTPUT_FOLDER)/metrics_test
+	./$(OUTPUT_FOLDER)/config_test
+	./$(OUTPUT_FOLDER)/access_log_test
 	./$(MGMT_TEST_BIN)
 
 $(MGMT_TEST_BIN): test/mgmt_cmd_test.c $(MGMT_TEST_DEPS) $(SHARED_OBJECTS)
 	mkdir -p $(OUTPUT_FOLDER)
 	$(COMPILER) $(COMPILER_FLAGS) test/mgmt_cmd_test.c $(MGMT_TEST_DEPS) $(SHARED_OBJECTS) -o $(MGMT_TEST_BIN)
+
+# Tests de módulos puros: autocontenidos (el .c bajo prueba se incluye en el test).
+$(OUTPUT_FOLDER)/%_test: test/%_test.c
+	mkdir -p $(OUTPUT_FOLDER)
+	$(COMPILER) $(COMPILER_FLAGS) $< -o $@
 
 .PHONY: all server client clean test
