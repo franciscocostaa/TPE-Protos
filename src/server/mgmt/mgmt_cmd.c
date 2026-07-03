@@ -2,16 +2,18 @@
  * mgmt_cmd.c - despacho de comandos del protocolo de monitoreo (ver mgmt_cmd.h).
  *
  * Comandos implementados: AUTH, GET-METRICS, LIST-USERS, ADD-USER, DEL-USER,
- * HELP, QUIT. Los de config/log se agregan en MF4+ como casos nuevos del dispatch.
+ * GET-CONFIG, SET-CONFIG, GET-LOG, HELP, QUIT.
  */
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
+#include <time.h>      /* gmtime_r, strftime para GET-LOG */
 
 #include "mgmt/mgmt_cmd.h"
 #include "metrics.h"
 #include "users.h"
 #include "config.h"
+#include "access_log.h"
 
 /** Máximo de tokens que parseamos de una línea (verbo + hasta 3 argumentos). */
 #define MGMT_CMD_MAX_ARGS 4
@@ -290,6 +292,57 @@ cmd_set_config(int argc, char *argv[], buffer *out) {
 }
 
 static mgmt_disposition
+cmd_get_log(int argc, char *argv[], buffer *out) {
+    (void) argv;
+    if (argc != 1) {
+        mgmt_cmd_emit_error(out, MGMT_ERR_INVALID_ARG, "GET-LOG takes no arguments");
+        return MGMT_DISP_CONTINUE;
+    }
+    const size_t total = access_log_count();
+
+    char scratch[MGMT_CMD_SCRATCH];
+    snprintf(scratch, sizeof(scratch), "%s %zu entries%s", MGMT_RESP_OK, total, MGMT_CRLF);
+    emit_str(out, scratch);
+
+    /* Una línea, peor caso: usuario + cliente + destino máximos + separadores. */
+    char line[ACCESS_LOG_USER_MAX + ACCESS_LOG_ADDR_MAX + ACCESS_LOG_DEST_MAX + 64];
+    for (size_t i = 0; i < total; i++) {
+        const struct access_log_entry *e = access_log_get(i);
+        if (e == NULL) {
+            break;
+        }
+        char      ts[sizeof("2026-01-01T00:00:00Z")];
+        struct tm tm_utc;
+        gmtime_r(&e->time, &tm_utc);
+        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
+
+        /* Formato PROTOCOL.md §5.8: ts \t user \t cliente \t destino:puerto \t REP */
+        const int n = snprintf(line, sizeof(line), "%s\t%s\t%s\t%s:%u\t%u",
+                               ts,
+                               e->username[0]    != '\0' ? e->username    : "-",
+                               e->client_addr[0] != '\0' ? e->client_addr : "-",
+                               e->dest[0]        != '\0' ? e->dest         : "-",
+                               e->dest_port,
+                               e->rep);
+
+        /* MF1 no tiene streaming: el write buffer es acotado. Si esta línea más
+         * el terminador no entran, cortamos limpio (la respuesta siempre cierra
+         * con el '.'). Invariante: al entrar acá siempre quedan >= 3 bytes para
+         * el terminador, porque cada línea emitida deja ese margen. */
+        size_t space;
+        buffer_write_ptr(out, &space);
+        const size_t needed = (size_t) n + 1 /*dot-stuffing*/ + 2 /*CRLF*/
+                            + 1 + 2 /*terminador '.' + CRLF*/;
+        if (n < 0 || space < needed) {
+            break;
+        }
+        emit_data_line(out, line);
+    }
+    emit_str(out, MGMT_MULTILINE_END MGMT_CRLF);
+    return MGMT_DISP_CONTINUE;
+}
+
+static mgmt_disposition
 cmd_help(buffer *out) {
     emit_str(out, MGMT_RESP_OK " available commands" MGMT_CRLF);
     emit_str(out, MGMT_CMD_AUTH        MGMT_CRLF);
@@ -299,6 +352,7 @@ cmd_help(buffer *out) {
     emit_str(out, MGMT_CMD_DEL_USER    MGMT_CRLF);
     emit_str(out, MGMT_CMD_GET_CONFIG  MGMT_CRLF);
     emit_str(out, MGMT_CMD_SET_CONFIG  MGMT_CRLF);
+    emit_str(out, MGMT_CMD_GET_LOG     MGMT_CRLF);
     emit_str(out, MGMT_CMD_HELP        MGMT_CRLF);
     emit_str(out, MGMT_CMD_QUIT        MGMT_CRLF);
     emit_str(out, MGMT_MULTILINE_END   MGMT_CRLF);
@@ -360,6 +414,9 @@ mgmt_cmd_dispatch(struct mgmt_session *session, char *line, buffer *out) {
     }
     if (strcasecmp(verb, MGMT_CMD_SET_CONFIG) == 0) {
         return cmd_set_config(argc, argv, out);
+    }
+    if (strcasecmp(verb, MGMT_CMD_GET_LOG) == 0) {
+        return cmd_get_log(argc, argv, out);
     }
 
     mgmt_cmd_emit_error(out, MGMT_ERR_UNKNOWN_CMD, "unknown command");
