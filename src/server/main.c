@@ -18,11 +18,13 @@
 
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 
 #include "args.h"
 #include "selector.h"
 #include "socks5.h"
 #include "mgmt/mgmt.h"
+#include "mgmt/mgmt_cmd.h"
 #include "users.h"
 #include "metrics.h"
 #include "config.h"
@@ -51,17 +53,37 @@ sigterm_handler(const int signal) {
 
 /**
  * Crea un socket pasivo IPv6 dual-stack (atiende clientes IPv4 e IPv6) ligado a
- * in6addr_any en el puerto dado. Devuelve el fd o -1 (con *err_msg seteado).
+ * `bind_addr` en el puerto dado. `bind_addr` puede ser NULL / "0.0.0.0" / "::"
+ * (todas las interfaces), una IPv6 literal, o una IPv4 literal (se representa
+ * como IPv4-mapped). Devuelve el fd o -1 (con *err_msg seteado).
  */
 static int
-create_passive_socket(const unsigned short port, const char **err_msg) {
+create_passive_socket(const char *bind_addr, const unsigned short port, const char **err_msg) {
     struct sockaddr_in6 addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin6_family = AF_INET6;
-    addr.sin6_addr   = in6addr_any;
     addr.sin6_port   = htons(port);
 
-    const int fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);  //so when we use this fd the kernel uses this number to locate the socket in the kernel space, and then it uses the socket to send and receive data from the network
+    /* Resolvemos la dirección de bind sobre el socket IPv6 dual-stack. */
+    if (bind_addr == NULL || strcmp(bind_addr, "0.0.0.0") == 0
+            || strcmp(bind_addr, "::") == 0 || strcmp(bind_addr, "*") == 0) {
+        addr.sin6_addr = in6addr_any;                    /* todas las interfaces */
+    } else if (inet_pton(AF_INET6, bind_addr, &addr.sin6_addr) == 1) {
+        /* IPv6 literal: ya quedó cargada en sin6_addr. */
+    } else {
+        struct in_addr v4;
+        if (inet_pton(AF_INET, bind_addr, &v4) != 1) {
+            *err_msg = "dirección de bind inválida (esperaba IPv4 o IPv6 literal)";
+            return -1;
+        }
+        /* IPv4 literal -> IPv4-mapped IPv6 (::ffff:a.b.c.d) para el socket dual-stack. */
+        memset(&addr.sin6_addr, 0, sizeof(addr.sin6_addr));
+        addr.sin6_addr.s6_addr[10] = 0xff;
+        addr.sin6_addr.s6_addr[11] = 0xff;
+        memcpy(&addr.sin6_addr.s6_addr[12], &v4, sizeof(v4));
+    }
+
+    const int fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
     if (fd < 0) {
         *err_msg = "no se pudo crear el socket pasivo";
         return -1;
@@ -112,6 +134,9 @@ main(const int argc, char **argv) {
     };
     config_init(&initial_cfg);
 
+    /* Token del canal de administración: si no se pasó -t, mgmt usa su default. */
+    mgmt_cmd_set_token(args.mng_token);
+
     /* No leemos de stdin. */
     close(STDIN_FILENO);
     /* Un write a un socket cerrado debe fallar con EPIPE, no matar el proceso. */
@@ -126,11 +151,11 @@ main(const int argc, char **argv) {
     int             mgmt_fd     = -1;
     bool            accepting   = true; //this is great for graceful shutdown, we can use it to stop accepting new connections when we receive a signal
 
-    socks_fd = create_passive_socket(args.socks_port, &err_msg);
+    socks_fd = create_passive_socket(args.socks_addr, args.socks_port, &err_msg);
     if (socks_fd < 0) {
         goto finally;
     }
-    mgmt_fd = create_passive_socket(args.mng_port, &err_msg);
+    mgmt_fd = create_passive_socket(args.mng_addr, args.mng_port, &err_msg);
     if (mgmt_fd < 0) {
         goto finally;
     }
