@@ -217,6 +217,43 @@ curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8000/ -o /dev/nul
 
 ---
 
+## Resultados obtenidos (corrida de referencia)
+
+Corrida en Docker (`gcc:latest`, `--ulimit nofile=8192`), destino local. Los números
+absolutos dependen del hardware; lo importante es la **tendencia** y el **techo**.
+
+**1. Máximo de conexiones concurrentes: 510.** Coincide con lo esperado
+(`FD_SETSIZE`=1024 ÷ 2 fds por conexión, menos los sockets pasivos). **Supera el
+mínimo de 500** de la consigna. El techo lo impone `select()`.
+
+**2. Throughput (archivo de 100 MB, destino concurrente):**
+
+| Conexiones | Tiempo | Agregado | Por conexión |
+|---|---|---|---|
+| 1   | 0.42 s | 237 MB/s | 237 MB/s |
+| 10  | 1.18 s | 847 MB/s |  85 MB/s |
+| 50  | 6.29 s | 795 MB/s |  16 MB/s |
+| 100 | 14.3 s | 700 MB/s |   7 MB/s |
+
+Lectura: el **agregado hace pico (~800 MB/s) con 10–50 conexiones y después degrada**
+(700 con 100); el throughput **por conexión** cae de 237 a 7 MB/s a medida que más
+conexiones compiten por el **único hilo**. Esa curva es la respuesta a "cómo se
+degrada el throughput".
+
+**3. Estabilidad:** RSS del proceso **estable** (~6.9 MB antes y después de 2000
+conexiones). Métricas del proxy tras la corrida: `connections-total=2161,
+connections-current=0` (drena correctamente), `bytes-transferred ≈ 16.8 GB`.
+
+**3b. Valgrind:** `ERROR SUMMARY: 0 errors` y `FILE DESCRIPTORS: 2 open (2 std) at
+exit` → **sin fugas de memoria ni de descriptores**. (Es la medición confiable de
+fugas; el conteo por `/proc/PID/fd` puede confundirse si el reinicio del server deja
+un proceso viejo drenando.)
+
+**4. Robustez:** con 20 clientes lentos colgados, un cliente normal responde
+`http_code=200` → el modelo no bloqueante multiplexado sigue atendiendo sin trabarse.
+Limitación a documentar: sin timeout de inactividad, un cliente lento ocupa una
+conexión indefinidamente (y puede demorar el graceful shutdown; la 2ª señal lo fuerza).
+
 ## Qué incluir en el informe (sección de estrés)
 
 1. **Máximo de conexiones** (Prueba 1): el número medido y la explicación
