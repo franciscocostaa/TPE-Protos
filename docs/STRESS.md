@@ -1,230 +1,219 @@
 # Guía de pruebas de estrés — Proxy SOCKS5
 
-> Cubre el requerimiento no funcional NF3 de la consigna: *"¿Cuál es la máxima
-> cantidad de conexiones simultáneas que soporta? ¿Cómo se degrada el throughput?"*.
-> Los resultados de esta guía van a la sección **"Ejemplos de prueba"** del informe.
+> Cubre el requerimiento no funcional NF3 de la consigna: *"¿Cuál es la máxima cantidad de
+> conexiones simultáneas que soporta? ¿Cómo se degrada el throughput?"*. Los resultados van
+> a la sección **"Ejemplos de prueba"** del informe.
 
-Todo se corre dentro de un contenedor Linux (en Windows no hay `gcc`). Las pruebas
-apuntan a un **destino local** para no depender de internet ni de terceros.
+Todo se corre dentro de un contenedor Linux (en Windows no hay `gcc`). Las pruebas apuntan a
+**destinos locales** para no depender de internet ni de terceros.
+
+> **Honestidad sobre la metodología.** Armar estas pruebas tuvo tropiezos reales; los comandos
+> de acá son la versión **ya corregida**, y cada sección documenta la trampa en la que caímos
+> (van con ⚠️). Los números de "Resultados" son de una **corrida de referencia**: en otro
+> hardware cambian los MB/s absolutos, pero se mantiene la **tendencia** y el **techo**.
 
 ---
 
 ## 0. Setup común
 
-Levantá un contenedor con las herramientas y compilá:
+Contenedor con herramientas + compilación:
 
 ```bash
-docker run --rm -it --ulimit nofile=8192:8192 \
-  -v /c/Users/roman/PROTOS/TPE-Protos:/work -w /work \
-  gcc:latest bash
+docker run --rm -it --ulimit nofile=8192:8192 -v "$PWD:/work" -w /work gcc:latest bash
 # dentro del contenedor:
 apt-get update -qq && apt-get install -y -qq curl python3 iproute2 procps valgrind
 make
 ```
 
-**Por qué `--ulimit nofile=8192`:** cada conexión SOCKS usa **2 file descriptors**
-(cliente + origen). Para 500 conexiones son ~1000 fds; el default del sistema (1024)
-queda justo. Subimos el límite para que el techo lo ponga el **programa** (el
-`FD_SETSIZE` de `select()`, típicamente 1024), no el sistema operativo.
+**Por qué `--ulimit nofile=8192`:** cada conexión SOCKS usa **2 file descriptors** (cliente +
+origen). Para 500 conexiones son ~1000 fds. Subimos el límite del SO **a propósito** para que el
+techo lo ponga el **programa** (el `FD_SETSIZE` de `select()`, típicamente 1024), no el sistema.
 
-**Destino local** (un servidor HTTP que sirve un archivo grande, para medir throughput):
+**Dos destinos locales** (hacen falta dos, ya se explica por qué):
 
 ```bash
 mkdir -p /tmp/www && dd if=/dev/zero of=/tmp/www/big.bin bs=1M count=100   # archivo de 100 MB
-python3 -m http.server 8000 --directory /tmp/www >/tmp/http.log 2>&1 &
+
+# Destino A: SOLO escucha (backlog grande) — para la prueba de MÁXIMO de conexiones.
+python3 -c 'import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(("127.0.0.1",8000)); s.listen(2048); time.sleep(3600)' &
+
+# Destino B: HTTP CONCURRENTE (ThreadingHTTPServer) — para throughput/relay.
+# OJO: `python3 -m http.server` es de UN solo hilo y serializa las descargas; para medir
+# throughput concurrente hay que usar ThreadingHTTPServer.
+cat > /tmp/httpd.py <<'PY'
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+import os
+os.chdir("/tmp/www")
+class Q(SimpleHTTPRequestHandler):
+    def log_message(self, *a): pass
+ThreadingHTTPServer(("127.0.0.1",8001), Q).serve_forever()
+PY
+python3 /tmp/httpd.py &
 ```
 
 **El servidor bajo prueba** (SOCKS en 1080, mgmt en 8080, un usuario, token):
 
 ```bash
 ./bin/server -p 1080 -P 8080 -u test:test -t secreto >/tmp/server.log 2>&1 &
-SRV=$(pgrep -f 'bin/server')
 ```
 
 ---
 
 ## 1. Máximo de conexiones concurrentes  *(F1: ≥ 500)*
 
-**Qué testea:** cuántas conexiones SOCKS **simultáneas** puede sostener el proxy
-antes de empezar a rechazar. Es el número que pide la consigna (mínimo 500).
+**Qué testea:** cuántas conexiones SOCKS **simultáneas** sostiene el proxy antes de rechazar.
 
-**Cómo:** un script abre N conexiones a la vez, hace el handshake completo
-(HELLO → AUTH → CONNECT a un destino local) y las **mantiene abiertas**, contando
-cuántas logró establecer. Guardalo como `stress_conns.py`:
+**Cómo:** un script abre conexiones (handshake SOCKS completo) **una tras otra, sin cerrarlas**,
+guardándolas en una lista, hasta que una falla; el total es el máximo. Usa el **destino A
+(listen-only, :8000)**. Guardalo como `maxconns.py`:
 
 ```python
-import socket, struct, sys, threading, time
-
-PROXY = ("127.0.0.1", 1080)
-USER, PW = b"test", b"test"
-DEST_HOST, DEST_PORT = b"127.0.0.1", 8000
-N = int(sys.argv[1]) if len(sys.argv) > 1 else 500
-
+import socket, struct
+PROXY=("127.0.0.1",1080); USER=b"test"; PW=b"test"; DH=b"127.0.0.1"; DP=8000
 def one():
-    s = socket.socket(); s.settimeout(10); s.connect(PROXY)
-    s.sendall(b"\x05\x01\x02")                                  # HELLO: user/pass
-    assert s.recv(2)[1] == 0x02
-    s.sendall(b"\x01" + bytes([len(USER)]) + USER + bytes([len(PW)]) + PW)  # AUTH RFC1929
-    assert s.recv(2)[1] == 0x00
-    s.sendall(b"\x05\x01\x00\x03" + bytes([len(DEST_HOST)]) + DEST_HOST + struct.pack(">H", DEST_PORT))
-    assert s.recv(10)[1] == 0x00                                # REP == 0 (éxito)
+    s=socket.socket(); s.settimeout(4); s.connect(PROXY)
+    s.sendall(b"\x05\x01\x02");            assert s.recv(2)[1]==0x02   # HELLO user/pass
+    s.sendall(b"\x01"+bytes([len(USER)])+USER+bytes([len(PW)])+PW); assert s.recv(2)[1]==0x00  # AUTH RFC1929
+    s.sendall(b"\x05\x01\x00\x03"+bytes([len(DH)])+DH+struct.pack(">H",DP)); assert s.recv(10)[1]==0x00  # CONNECT, REP=0
     return s
-
-ok, fail, socks = [], [0], []
-lock = threading.Lock()
-def worker():
-    try:
-        with lock: socks.append(one())
-    except Exception:
-        with lock: fail[0] += 1
-ts = [threading.Thread(target=worker) for _ in range(N)]
-for t in ts: t.start()
-for t in ts: t.join()
-print(f"pedidas={N}  establecidas={len(socks)}  fallidas={fail[0]}")
-time.sleep(8)   # las mantenemos abiertas para poder mirar el server
+socks=[]
+try:
+    while len(socks) < 1300: socks.append(one())
+except Exception: pass
+print("maximo de conexiones SOCKS simultaneas:", len(socks))
 ```
-
-**Corré y observá** (en otra terminal del mismo contenedor, o con `&`):
 
 ```bash
-python3 stress_conns.py 500 &
-sleep 3
-# ¿cuántas conexiones ve el server en el puerto SOCKS?
-ss -tn state established '( sport = :1080 )' | wc -l
-# y lo que dicen las métricas del propio proxy:
-./bin/client 127.0.0.1 8080 -t secreto GET-METRICS
+python3 maxconns.py
 ```
 
-**Qué mirar / reportar:**
-- `establecidas` vs `pedidas` del script.
-- `connections-current` de `GET-METRICS` (debería coincidir con las vivas).
-- Repetí subiendo N (500 → 800 → 1000 → 1100) hasta que empiecen a fallar: ese es
-  **el máximo**. Se espera que caiga cerca de `FD_SETSIZE/2 ≈ 500` (por los 2 fds
-  por conexión) — **ese límite es la conclusión clave del informe**, y se explica
-  por el uso de `select()`.
+**Qué mirar / reportar:** el número impreso. Se espera cerca de `FD_SETSIZE/2 ≈ 510` (2 fds por
+conexión, menos los pasivos). **Ese techo, dado por `select()`, es la conclusión clave del
+informe** — es determinista y reproducible.
+
+> ⚠️ **Trampa (la aprendimos a los golpes):** el destino A nunca cierra sus conexiones, así que
+> al terminar esta prueba el server queda **saturado** con ~510 conexiones medio abiertas
+> ocupando todos sus fds. **Antes de las pruebas 2–4 hay que REINICIAR el server** (`pkill -TERM
+> -f bin/server; sleep 2; ./bin/server ... &`), si no las siguientes le pegan a un server tapado.
 
 ---
 
 ## 2. Throughput y su degradación  *(NF3)*
 
-**Qué testea:** cuántos MB/s mueve el proxy, y **cómo cae** ese número a medida que
-aumentan las conexiones concurrentes que compiten por el CPU (recordá: un solo hilo).
+Reiniciá el server primero (por la trampa de arriba). Usa el **destino B (HTTP concurrente, :8001)**.
 
-**Cómo:** descargar el archivo de 100 MB a través del proxy, primero con 1 conexión
-y después con muchas en paralelo, midiendo el tiempo total.
+**Qué testea:** cuántos MB/s mueve el proxy y **cómo caen** con más conexiones concurrentes
+(recordá: un solo hilo).
 
 ```bash
-dl() {   # $1 = cantidad de descargas en paralelo
-  local n=$1 start end
-  start=$(date +%s.%N)
-  for i in $(seq 1 "$n"); do
-    curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8000/big.bin -o /dev/null &
+dl() {   # $1 = descargas en paralelo
+  n=$1; start=$(date +%s.%N); pids=""
+  i=0; while [ $i -lt "$n" ]; do
+    curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8001/big.bin -o /dev/null & pids="$pids $!"
+    i=$((i+1))
   done
-  wait
+  wait $pids       # <-- $pids, NO 'wait' a secas
   end=$(date +%s.%N)
-  awk -v n="$n" -v t="$(echo "$end-$start" | bc)" \
-    'BEGIN{ printf "  %4d conexiones  |  %6.2f s  |  %7.1f MB/s (agregado)\n", n, t, n*100/t }'
+  awk -v n=$n -v s=$start -v e=$end 'BEGIN{t=e-s; printf "  %4d conex | %6.2fs | %8.1f MB/s agregado | %6.1f MB/s por conex\n", n, t, n*100/t, 100/t}'
 }
-echo "throughput (100 MB por descarga):"
-dl 1
-dl 10
-dl 50
-dl 100
+dl 1; dl 10; dl 50; dl 100
 ```
 
-**Qué mirar / reportar:**
-- El MB/s **agregado** en cada nivel. Con 1 conexión tenés el pico; con más, el
-  agregado sube un poco y después **se aplana o cae** (el hilo único se satura).
-- Armá una tabla `conexiones → MB/s` y un párrafo explicando la curva. La respuesta
-  a "cómo se degrada el throughput" **es esa curva**.
+**Qué mirar / reportar:** la tabla `conexiones → MB/s`. El **agregado hace pico y después
+degrada**; el **por conexión se desploma**. Esa curva responde "cómo se degrada el throughput".
+
+> ⚠️ **Dos trampas que caímos:**
+> 1. `wait` a secas espera **también a los servidores-destino** (que corren para siempre con
+>    `sleep 3600` / `serve_forever`) → el script se **cuelga**. Hay que capturar los PIDs de los
+>    `curl` y hacer `wait $pids`.
+> 2. Si NO reiniciaste el server tras la Prueba 1, los `curl` fallan al instante (server tapado)
+>    y la cuenta da números **físicamente imposibles** (nos dio "14 GB/s"). Eso es basura, no
+>    throughput — se descarta.
 
 ---
 
-## 3. Estabilidad bajo carga: fugas de fds y de memoria
+## 3. Fugas de memoria y de descriptores — con Valgrind
 
-**Qué testea:** que después de miles de conexiones **el proxy no acumule** file
-descriptors ni memoria (que cada conexión se limpie del todo al cerrarse). Un leak
-acá haría que el server muera con el tiempo — es justo lo que la cátedra busca.
+**Qué testea:** que tras miles de conexiones el proxy **no acumule** memoria ni file
+descriptors (que cada conexión se limpie del todo al cerrarse). Un leak acá mataría el server
+con el tiempo.
 
-**Cómo:** medir fds y memoria (RSS) del proceso **antes y después** de un ciclo de
-muchas conexiones cortas.
-
-```bash
-snap() { echo "  fds=$(ls /proc/$SRV/fd | wc -l)  RSS=$(ps -o rss= -p $SRV | tr -d ' ') KB"; }
-echo "antes: $(snap)"
-for i in $(seq 1 5000); do
-  curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8000/ -o /dev/null
-done
-sleep 1
-echo "despues: $(snap)"
-```
-
-**Qué mirar / reportar:**
-- `fds` **antes ≈ después** (los pasivos + selector, un puñado). Si crece de forma
-  sostenida → leak de descriptores.
-- `RSS` estable (no crece linealmente con la cantidad de conexiones) → sin leak de
-  memoria. El proxy usa un **pool** de estructuras, así que la memoria debería
-  estabilizarse.
-
-**Versión con Valgrind** (más contundente para el informe):
+**La medición confiable es Valgrind.** (Ver más abajo por qué NO usamos el conteo de `/proc`.)
+Se ejercitan **todos los caminos**: IP literal (path rápido), hostname (hilo de DNS +
+`freeaddrinfo`), relay con datos reales, y errores.
 
 ```bash
-kill $SRV
+pkill -TERM -f 'bin/server'; sleep 2
 valgrind --leak-check=full --show-leak-kinds=all --track-fds=yes \
   ./bin/server -p 1080 -P 8080 -u test:test -t secreto >/tmp/vg.log 2>&1 &
-SRV=$(pgrep -f 'bin/server')
-for i in $(seq 1 200); do curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8000/ -o /dev/null; done
-kill -TERM $SRV          # graceful shutdown: valgrind vuelca el reporte al salir
-sleep 2; tail -30 /tmp/vg.log
+sleep 5
+for i in $(seq 1 800); do curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8001/ -o /dev/null; done   # IP literal
+for i in $(seq 1 150); do curl -s -x socks5h://test:test@127.0.0.1:1080 http://localhost:8001/ -o /dev/null;   done  # hostname -> hilo DNS
+for i in $(seq 1 30);  do curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8001/big.bin -o /dev/null; done  # relay con datos
+for i in $(seq 1 30);  do curl -s -m 3 -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:9999/ -o /dev/null;  done   # error (puerto cerrado)
+pkill -TERM -f 'bin/server'; sleep 10    # graceful shutdown -> Valgrind vuelca el reporte
+grep -E "definitely lost|indirectly lost|possibly lost|ERROR SUMMARY|FILE DESCRIPTORS" /tmp/vg.log
 ```
-Reportá el resumen: "definitely lost: 0 bytes" y "open file descriptors" al salir.
+
+**Qué mirar / reportar:** `ERROR SUMMARY: 0 errors` y `FILE DESCRIPTORS: 2 open (2 std) at exit`
+(los 2 estándar: stdout y stderr; el stdin lo cierra el `main`). → **sin fugas de memoria ni de
+descriptores.**
+
+**Chequeo complementario de drenado (este SÍ es válido):** tras generar carga,
+`./bin/client 127.0.0.1 8080 -t secreto GET-METRICS` debe mostrar **`connections-current=0`** →
+el server contabiliza y drena correctamente las conexiones.
+
+> ⚠️ **Por qué descartamos el conteo de `/proc/$PID/fd` como evidencia:** lo intentamos y **medía
+> el proceso equivocado**. Al reiniciar el server entre pruebas, el viejo puede quedar **colgado
+> en su graceful shutdown** (esperando a las conexiones medio abiertas de la Prueba 1, que nunca
+> cierran por falta de timeout de inactividad), y `pgrep -f bin/server | head -1` termina
+> apuntando a ese proceso viejo. Resultado: un `fds=1022` que **no dice nada** del server que
+> estábamos probando. Por eso el snapshot de `/proc` **no es evidencia**; la fuente de verdad
+> para fugas es **Valgrind**.
 
 ---
 
 ## 4. Robustez: conexiones lentas / lecturas parciales
 
-**Qué testea:** que un cliente que manda el handshake **de a un byte, muy lento**, no
-rompa ni cuelgue al proxy (correctitud de lecturas parciales, que es pass/fail en la
-consigna), y que muchos clientes lentos a la vez no lo tumben.
-
-**Cómo:** un script que manda el saludo SOCKS byte por byte con pausas. Guardalo como
-`slow_client.py`:
+**Qué testea:** que un cliente que manda el handshake **de a un byte, muy lento**, no rompa ni
+cuelgue al proxy (correctitud de lecturas parciales, pass/fail en la consigna), y que muchos
+clientes lentos a la vez no lo tumben. Usa el **destino B**.
 
 ```python
-import socket, time, sys
-s = socket.socket(); s.connect(("127.0.0.1", 1080))
+# slow_client.py
+import socket, time
+s = socket.socket(); s.settimeout(8); s.connect(("127.0.0.1", 1080))
 for b in b"\x05\x01\x02":            # HELLO byte a byte
-    s.sendall(bytes([b])); time.sleep(0.5)
-print("method:", s.recv(2))
-# ... seguiría con AUTH y REQUEST igual de lento ...
-time.sleep(2)
+    s.sendall(bytes([b])); time.sleep(0.4)
+s.recv(2); time.sleep(3); s.close()
 ```
 
 ```bash
-for i in $(seq 1 50); do python3 slow_client.py & done; wait
-# mientras corren, el server DEBE seguir atendiendo clientes normales:
-curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8000/ -o /dev/null -w "cliente normal: %{http_code}\n"
+pids=""; i=0; while [ $i -lt 20 ]; do python3 slow_client.py & pids="$pids $!"; i=$((i+1)); done
+sleep 1
+curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8001/ -o /dev/null -w "cliente normal: %{http_code}\n"
+wait $pids
 ```
 
-**Qué mirar / reportar:**
-- El proxy sigue respondiendo a clientes normales mientras hay 50 lentos (no se
-  bloquea en ninguno → confirma el modelo no bloqueante multiplexado).
-- Ninguna conexión lenta produce crash ni cierre prematuro.
-- **Limitación conocida a documentar:** el proxy **no** tiene timeout de inactividad,
-  así que un cliente lento ocupa una conexión indefinidamente (un slowloris podría
-  agotar las 500). Mencionarlo en "Limitaciones" del informe; el fix (timeouts de
-  idle en el selector) es una posible extensión.
+**Qué mirar / reportar:** el cliente normal responde `200` mientras hay 20 lentos colgados → el
+modelo no bloqueante multiplexado sigue atendiendo sin trabarse, y el parser del HELLO tolera 1
+byte por vez.
+
+> **Alcance honesto de esta prueba:** solo gotea la fase HELLO (no AUTH ni REQUEST), son solo 20
+> clientes, y una sola muestra del cliente normal. Prueba "no se bloquea", **no** prueba
+> resistencia a un slowloris grande. **Limitación a documentar:** sin timeout de inactividad, un
+> cliente lento ocupa una conexión indefinidamente (y puede demorar el graceful shutdown; la 2ª
+> señal fuerza el cierre). El fix (timeouts de idle) es una posible extensión.
 
 ---
 
 ## Resultados obtenidos (corrida de referencia)
 
-Corrida en Docker (`gcc:latest`, `--ulimit nofile=8192`), destino local. Los números
+Corrida en Docker (`gcc:latest`, `--ulimit nofile=8192`), destinos locales. Los números
 absolutos dependen del hardware; lo importante es la **tendencia** y el **techo**.
 
-**1. Máximo de conexiones concurrentes: 510.** Coincide con lo esperado
-(`FD_SETSIZE`=1024 ÷ 2 fds por conexión, menos los sockets pasivos). **Supera el
-mínimo de 500** de la consigna. El techo lo impone `select()`.
+**1. Máximo de conexiones concurrentes: 510.** Coincide con lo esperado (`FD_SETSIZE`=1024 ÷ 2
+fds por conexión, menos los pasivos). **Supera el mínimo de 500.** Determinista y reproducible.
 
 **2. Throughput (archivo de 100 MB, destino concurrente):**
 
@@ -235,33 +224,31 @@ mínimo de 500** de la consigna. El techo lo impone `select()`.
 | 50  | 6.29 s | 795 MB/s |  16 MB/s |
 | 100 | 14.3 s | 700 MB/s |   7 MB/s |
 
-Lectura: el **agregado hace pico (~800 MB/s) con 10–50 conexiones y después degrada**
-(700 con 100); el throughput **por conexión** cae de 237 a 7 MB/s a medida que más
-conexiones compiten por el **único hilo**. Esa curva es la respuesta a "cómo se
-degrada el throughput".
+El agregado hace pico (~800 MB/s) con 10–50 conexiones y después degrada (700 con 100); el
+throughput por conexión cae de 237 a 7 MB/s al competir por el único hilo.
+**Advertencia:** medido sobre *loopback* con un archivo de ceros → mide el **overhead interno
+del relay**, no throughput de red real. Es un **techo**; leer por su tendencia, no por el valor
+absoluto.
 
-**3. Estabilidad:** RSS del proceso **estable** (~6.9 MB antes y después de 2000
-conexiones). Métricas del proxy tras la corrida: `connections-total=2161,
-connections-current=0` (drena correctamente), `bytes-transferred ≈ 16.8 GB`.
+**3. Fugas (Valgrind):** `ERROR SUMMARY: 0 errors` y `FILE DESCRIPTORS: 2 open (2 std) at exit`
+→ **sin fugas de memoria ni de descriptores**. Chequeo de drenado (válido): tras 2161 conexiones,
+`connections-current=0` y `bytes-transferred ≈ 16.8 GB`.
+*(El snapshot de `/proc/PID/fd` se descartó por medir el proceso equivocado; ver §3.)*
 
-**3b. Valgrind:** `ERROR SUMMARY: 0 errors` y `FILE DESCRIPTORS: 2 open (2 std) at
-exit` → **sin fugas de memoria ni de descriptores**. (Es la medición confiable de
-fugas; el conteo por `/proc/PID/fd` puede confundirse si el reinicio del server deja
-un proceso viejo drenando.)
+**4. Robustez:** con 20 clientes lentos colgados, un cliente normal responde `http_code=200` →
+el modelo no bloqueante sigue atendiendo. (Alcance limitado; no cubre slowloris grande.)
 
-**4. Robustez:** con 20 clientes lentos colgados, un cliente normal responde
-`http_code=200` → el modelo no bloqueante multiplexado sigue atendiendo sin trabarse.
-Limitación a documentar: sin timeout de inactividad, un cliente lento ocupa una
-conexión indefinidamente (y puede demorar el graceful shutdown; la 2ª señal lo fuerza).
+---
 
 ## Qué incluir en el informe (sección de estrés)
 
-1. **Máximo de conexiones** (Prueba 1): el número medido y la explicación
-   (`select()` → `FD_SETSIZE`, 2 fds por conexión).
-2. **Curva de throughput** (Prueba 2): tabla `conexiones → MB/s` + análisis de la
-   degradación (hilo único).
-3. **Estabilidad** (Prueba 3): fds y memoria estables; salida de Valgrind sin leaks.
-4. **Robustez** (Prueba 4): sigue atendiendo bajo clientes lentos; limitación del
-   timeout de inactividad.
-5. **Entorno de prueba**: aclarar hardware, que es dentro de Docker, `ulimit`, etc.
-   (los números dependen del entorno; lo importante es la **tendencia** y el techo).
+1. **Máximo de conexiones** (Prueba 1): el número medido (510) y la explicación (`select()` →
+   `FD_SETSIZE`, 2 fds por conexión).
+2. **Curva de throughput** (Prueba 2): tabla `conexiones → MB/s` + análisis de la degradación
+   (hilo único), **con la advertencia de que es loopback (techo, no red real)**.
+3. **Fugas** (Prueba 3): salida de **Valgrind** sin leaks (la medición confiable). No usar el
+   snapshot de `/proc` como evidencia.
+4. **Robustez** (Prueba 4): sigue atendiendo bajo clientes lentos; **limitación del timeout de
+   inactividad** (slowloris) como posible extensión.
+5. **Entorno**: aclarar que es dentro de Docker, con `--ulimit`, sobre loopback. Los números
+   dependen del entorno; lo que vale es la **tendencia** y el **techo** (510).
