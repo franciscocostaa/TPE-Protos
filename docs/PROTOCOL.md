@@ -223,7 +223,7 @@ Cambia un parámetro de configuración en runtime.
 Mapea a `config_set_auth_required()`.
 
 > Nota de alcance: esta implementación cubre la **primera entrega**. El sniffer de
-> credenciales (clave `dissectors`, consigna F10) es de la segunda entrega y queda fuera.
+> credenciales (consigna F10) es de la segunda entrega y queda fuera.
 
 ### 5.8 `GET-LOG` **[A]**
 

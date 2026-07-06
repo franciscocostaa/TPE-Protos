@@ -28,25 +28,21 @@ main(void) {
     printf("== config ==\n");
 
     const struct config initial = {
-        .auth_required = true, .dissectors_enabled = false, .io_buffer_size = 4096,
+        .auth_required = true, .io_buffer_size = 4096,
     };
     config_init(&initial);
     struct config c = config_get();
-    CHECK(c.auth_required == true && c.dissectors_enabled == false && c.io_buffer_size == 4096,
+    CHECK(c.auth_required == true && c.io_buffer_size == 4096,
           "init refleja los valores iniciales");
 
     /* setters puntuales */
     config_set_auth_required(false);
     CHECK(config_get().auth_required == false, "set_auth_required cambia el valor");
 
-    config_set_dissectors(true);
-    CHECK(config_get().dissectors_enabled == true, "set_dissectors cambia el valor");
-    CHECK(config_get().auth_required == false,     "set_dissectors no toca auth_required");
-
     /* init(NULL) => todo en 0 */
     config_init(NULL);
     c = config_get();
-    CHECK(c.auth_required == false && c.dissectors_enabled == false && c.io_buffer_size == 0,
+    CHECK(c.auth_required == false && c.io_buffer_size == 0,
           "init(NULL) deja la config en 0");
 
     /* config_get() devuelve una COPIA: mutarla no afecta la global */

@@ -87,7 +87,7 @@ bloqueante. La especificación completa, agnóstica al lenguaje, está en
 | **Respuestas** | `+OK`/`-ERR <código>`; respuestas multilínea terminadas en `.` con *dot-stuffing* | Formato inequívoco y parseable, al estilo POP3. |
 
 **Comandos implementados:** `AUTH`, `GET-METRICS`, `LIST-USERS`, `ADD-USER`, `DEL-USER`,
-`GET-CONFIG`, `SET-CONFIG` (claves `auth-required` y `dissectors`), `GET-LOG`, `HELP`,
+`GET-CONFIG`, `SET-CONFIG` (clave `auth-required`), `GET-LOG`, `HELP`,
 `QUIT`. Los comandos que manejan usuarios, config o log requieren autenticación previa.
 
 El protocolo permite **manejar usuarios y cambiar la configuración en tiempo de ejecución
@@ -152,8 +152,7 @@ el cliente traduce eso al protocolo.
   `FD_SETSIZE` y escalar más allá de las ~510 conexiones.
 - **Timeouts de inactividad** (reaping de conexiones ociosas) para mitigar *slowloris* y
   hacer el graceful shutdown acotado en el tiempo.
-- **Sniffer de credenciales POP3** (segunda entrega), sobre el gancho de *dissectors* ya
-  previsto en la configuración.
+- **Sniffer de credenciales POP3** estilo ettercap (segunda entrega, consigna F10).
 - **Persistencia** opcional de usuarios y del registro de accesos a archivo.
 - **Métricas adicionales** (bytes por sentido, tasa de fallos de conexión, etc.).
 
@@ -235,7 +234,6 @@ Ambos binarios siguen las convenciones de línea de comandos POSIX. Opciones del
 | `-L <dir>` | Dirección de escucha del monitoreo | `127.0.0.1` (loopback) |
 | `-u <user>:<pass>` | Usuario del proxy (hasta 10) | — |
 | `-t <token>` | Token del canal administrativo | (default compilado) |
-| `-N` | Deshabilita los *dissectors* (2ª entrega) | habilitados |
 | `-h` / `-v` | Ayuda / versión | — |
 
 El servicio de monitoreo escucha **por defecto solo en loopback** por seguridad; para

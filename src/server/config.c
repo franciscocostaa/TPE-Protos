@@ -28,8 +28,3 @@ void
 config_set_auth_required(bool v) {
     current.auth_required = v;
 }
-
-void
-config_set_dissectors(bool v) {
-    current.dissectors_enabled = v;
-}

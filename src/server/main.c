@@ -129,8 +129,7 @@ main(const int argc, char **argv) {
     const struct config initial_cfg = {
         /* si se cargaron usuarios, por defecto exigimos autenticación */
         .auth_required      = users_count() > 0, //check if this approach is right
-        .dissectors_enabled = args.disectors_enabled, //think its for the second part of the project, but we can leave it as is
-        .io_buffer_size     = SOCKS5_BUFFER_SIZE, 
+        .io_buffer_size     = SOCKS5_BUFFER_SIZE,
     };
     config_init(&initial_cfg);
 

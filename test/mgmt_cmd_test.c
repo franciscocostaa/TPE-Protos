@@ -66,7 +66,7 @@ main(void) {
     users_init();
     metrics_init();
     const struct config cfg = {
-        .auth_required = true, .dissectors_enabled = false, .io_buffer_size = 4096,
+        .auth_required = true, .io_buffer_size = 4096,
     };
     config_init(&cfg);
     mgmt_cmd_set_token("secret");

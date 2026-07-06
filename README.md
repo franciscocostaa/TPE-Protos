@@ -89,7 +89,6 @@ se ejecutan directamente desde `bin/`.
 | `-P <conf port>` | Puerto donde escucha el servicio de monitoreo (SMP). | `8080` |
 | `-u <name>:<pass>` | Usuario habilitado para autenticarse contra el proxy SOCKS5. Se puede repetir hasta 10 veces (una por usuario). | ninguno |
 | `-t <token>` | Token de autenticación del canal de monitoreo (comando `AUTH` de SMP). | `admin` (valor compilado, ver `src/server/mgmt/mgmt_cmd.c`) |
-| `-N` | Deshabilita los dissectors de protocolo de aplicación (funcionalidad de la segunda entrega). | dissectors habilitados |
 | `-v` | Imprime la versión y termina. | — |
 | `-h` | Imprime la ayuda y termina. | — |
 

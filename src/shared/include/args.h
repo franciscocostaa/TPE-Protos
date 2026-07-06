@@ -22,8 +22,6 @@ struct socks5args
     /* Token del canal de administración (mgmt). NULL => usa el default compilado. */
     char* mng_token;
 
-    bool disectors_enabled;
-
     struct users users[MAX_USERS];
 };
 
