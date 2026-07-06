@@ -192,7 +192,7 @@ el cliente de monitoreo; graceful shutdown.
 | Throughput 1 conexión | 237 MB/s |
 | Throughput 10 / 50 / 100 conexiones (agregado) | 847 / 795 / 700 MB/s |
 | Throughput por conexión (1 → 100) | 237 → 7 MB/s (degrada por el hilo único) |
-| Valgrind (memoria + descriptores) | `0 errors`, sin fugas de fds |
+| Valgrind (640 conexiones, todos los caminos) | 1.377 allocs = 1.377 frees, `0 errors`, 0 fds fugados |
 
 > **Nota metodológica:** las cifras de throughput se midieron sobre *loopback* con un archivo
 > de ceros, dentro de un contenedor Docker. Representan el **overhead interno del relay** (un

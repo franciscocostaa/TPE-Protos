@@ -131,12 +131,12 @@ pkill -TERM -f 'bin/server'; sleep 2
 valgrind --leak-check=full --show-leak-kinds=all --track-fds=yes \
   ./bin/server -p 1080 -P 8080 -u test:test -t secreto >/tmp/vg.log 2>&1 &
 sleep 5
-for i in $(seq 1 800); do curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8001/ -o /dev/null; done   # IP literal
-for i in $(seq 1 150); do curl -s -x socks5h://test:test@127.0.0.1:1080 http://localhost:8001/ -o /dev/null;   done  # hostname -> hilo DNS
-for i in $(seq 1 30);  do curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8001/big.bin -o /dev/null; done  # relay con datos
-for i in $(seq 1 30);  do curl -s -m 3 -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:9999/ -o /dev/null;  done   # error (puerto cerrado)
+for i in $(seq 1 500); do curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8001/ -o /dev/null; done   # IP literal
+for i in $(seq 1 100); do curl -s -x socks5h://test:test@127.0.0.1:1080 http://localhost:8001/ -o /dev/null;   done  # hostname -> hilo DNS
+for i in $(seq 1 20);  do curl -s -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:8001/big.bin -o /dev/null; done  # relay con datos
+for i in $(seq 1 20);  do curl -s -m 3 -x socks5h://test:test@127.0.0.1:1080 http://127.0.0.1:9999/ -o /dev/null;  done   # error (puerto cerrado)
 pkill -TERM -f 'bin/server'; sleep 10    # graceful shutdown -> Valgrind vuelca el reporte
-grep -E "definitely lost|indirectly lost|possibly lost|ERROR SUMMARY|FILE DESCRIPTORS" /tmp/vg.log
+grep -E "total heap usage|in use at exit|definitely lost|ERROR SUMMARY|FILE DESCRIPTORS" /tmp/vg.log
 ```
 
 **Qué mirar / reportar:** `ERROR SUMMARY: 0 errors` y `FILE DESCRIPTORS: 2 open (2 std) at exit`
@@ -202,9 +202,10 @@ throughput por conexión cae de 237 a 7 MB/s al competir por el único hilo.
 relay** (un techo), no throughput de red real. Se lee por su **tendencia**, no por el valor
 absoluto.
 
-**3. Fugas (Valgrind):** `ERROR SUMMARY: 0 errors` y `FILE DESCRIPTORS: 2 open (2 std) at exit`
-→ **sin fugas de memoria ni de descriptores**. Chequeo de drenado: tras 2161 conexiones,
-`connections-current=0` y `bytes-transferred ≈ 16.8 GB`.
+**3. Fugas (Valgrind, 640 conexiones ejercitando todos los caminos):** `total heap usage:
+1.377 allocs, 1.377 frees` (todo lo reservado se liberó), `in use at exit: 0 bytes`,
+`FILE DESCRIPTORS: 2 open (2 std) at exit` y `ERROR SUMMARY: 0 errors` → **sin fugas de memoria
+ni de descriptores**. Chequeo de drenado: `connections-current=0` tras las 640 conexiones.
 
 **4. Robustez:** con 20 clientes lentos colgados, un cliente normal responde `http_code=200` →
 el modelo no bloqueante sigue atendiendo.
