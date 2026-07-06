@@ -1,6 +1,6 @@
 COMPILER=gcc
 
-COMPILER_FLAGS=-std=c11 -pedantic -Wall -Wextra -g -pthread -Isrc/shared -Isrc/server
+COMPILER_FLAGS=-std=c11 -pedantic -Wall -Wextra -g -pthread -Isrc/shared/include -Isrc/server/include -Isrc/shared -Isrc/server
 
 # Para exponer las funciones POSIX/BSD (sigaction, pthread_kill, getaddrinfo, ...)
 # bajo -std=c11 cada SO necesita algo distinto:

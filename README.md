@@ -40,10 +40,6 @@ Ubicación de todo el material de la entrega:
 | Artefactos generados (binarios) | `bin/server`, `bin/client` (y binarios de test), generados por `make` |
 | Objetos intermedios de compilación | `obj/` (generado por `make`, no se versiona) |
 | Tests unitarios | `test/` (harness propio, ver sección "Compilación") |
-| Especificación del protocolo SMP (estilo RFC) | `docs/PROTOCOL.md` |
-| Documento de diseño de la arquitectura | `docs/DESIGN.md` y `docs/DESIGN_DECISIONS.md` |
-| Guía de pruebas de estrés (NF3) | `docs/STRESS.md` |
-| Base de referencia provista por la cátedra | `medias5-main/` (framework de ejemplo) y `parches/` (patches de referencia sobre módulos de `src/shared/`) |
 
 ---
 
