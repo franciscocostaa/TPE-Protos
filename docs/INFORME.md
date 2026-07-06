@@ -123,11 +123,6 @@ el cliente traduce eso al protocolo.
   esos casos de un EOF (`n == 0`) o un error real.
 - **Códigos REP genéricos.** Al principio todo fallo de conexión reportaba
   `HOST_UNREACHABLE`. Se agregó el mapeo de `errno` a códigos REP específicos.
-- **Metodología de pruebas de estrés.** El propio andamiaje de pruebas tuvo errores que
-  hubo que depurar (un `wait` que esperaba a los servidores-destino, y mediciones
-  contaminadas por un servidor saturado en una prueba previa). Se detectaron por dar
-  resultados físicamente imposibles (p. ej. 14 GB/s) y se descartaron; los números
-  reportados en §7 son los de las corridas ya corregidas.
 
 ---
 
@@ -201,11 +196,10 @@ el cliente de monitoreo; graceful shutdown.
 | Throughput por conexión (1 → 100) | 237 → 7 MB/s (degrada por el hilo único) |
 | Valgrind (memoria + descriptores) | `0 errors`, sin fugas de fds |
 
-> **Advertencia metodológica (honestidad):** las cifras de throughput se midieron sobre
-> *loopback* con un archivo de ceros, dentro de un contenedor Docker. Miden el **overhead
-> interno del relay**, no throughput de red real; deben leerse como un **techo** y por su
-> **tendencia** (pico y degradación), no como valores absolutos de producción. El número de
-> conexiones (510) sí es determinista y reproducible.
+> **Nota metodológica:** las cifras de throughput se midieron sobre *loopback* con un archivo
+> de ceros, dentro de un contenedor Docker. Representan el **overhead interno del relay** (un
+> techo), no throughput de red real; deben leerse por su **tendencia** (pico y degradación) más
+> que por su valor absoluto. El número de conexiones (510) es determinista y reproducible.
 
 ---
 
