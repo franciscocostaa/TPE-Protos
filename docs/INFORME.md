@@ -140,7 +140,6 @@ el cliente traduce eso al protocolo.
   1024 entradas) y los usuarios son **volátiles**: se pierden al reiniciar. La consigna lo
   permite para las métricas; los usuarios se siembran por línea de comandos y por el
   protocolo de monitoreo.
-- **Sniffer POP3 no implementado.** Corresponde a la **segunda entrega** (F10).
 - **Cliente de monitoreo.** Cumple el requisito de fondo (no es netcat; maneja auth,
   framing y dot-stuffing), pero el host y el puerto se pasan como argumentos posicionales
   en lugar de opciones POSIX con nombre.
