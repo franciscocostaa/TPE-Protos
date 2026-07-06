@@ -24,7 +24,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 
-#include "mgmt/mgmt_proto.h"
+#include "mgmt_proto.h"
 
 #define CLIENT_LINE_MAX MGMT_LINE_MAX
 

@@ -9,7 +9,7 @@
 #include <strings.h>   /* strcasecmp */
 #include <time.h>      /* gmtime_r, strftime para GET-LOG */
 
-#include "mgmt/mgmt_cmd.h"
+#include "mgmt_cmd.h"
 #include "metrics.h"
 #include "users.h"
 #include "config.h"

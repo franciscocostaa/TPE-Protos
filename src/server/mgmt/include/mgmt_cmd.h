@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "buffer.h"
-#include "mgmt/mgmt_proto.h"
+#include "mgmt_proto.h"
 
 /**
  * @file mgmt_cmd.h

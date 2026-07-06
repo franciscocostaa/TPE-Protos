@@ -23,9 +23,9 @@
 
 #include <sys/socket.h>
 
-#include "mgmt/mgmt.h"
-#include "mgmt/mgmt_cmd.h"
-#include "mgmt/mgmt_proto.h"
+#include "mgmt.h"
+#include "mgmt_cmd.h"
+#include "mgmt_proto.h"
 #include "buffer.h"
 #include "stm.h"
 #include "users.h"
