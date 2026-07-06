@@ -210,15 +210,3 @@ absoluto.
 el modelo no bloqueante sigue atendiendo.
 
 ---
-
-## Qué incluir en el informe (sección de estrés)
-
-1. **Máximo de conexiones** (Prueba 1): el número medido (510) y la explicación (`select()` →
-   `FD_SETSIZE`, 2 fds por conexión).
-2. **Curva de throughput** (Prueba 2): tabla `conexiones → MB/s` + análisis de la degradación
-   (hilo único), aclarando que es sobre *loopback* (un techo, no throughput de red real).
-3. **Fugas** (Prueba 3): salida de **Valgrind** sin leaks.
-4. **Robustez** (Prueba 4): sigue atendiendo bajo clientes lentos; **limitación del timeout de
-   inactividad** (slowloris) como posible extensión.
-5. **Entorno**: aclarar que es dentro de Docker, con `--ulimit`, sobre loopback. Lo que vale es
-   la **tendencia** y el **techo** (510).
