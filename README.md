@@ -32,7 +32,7 @@ Ubicación de todo el material de la entrega:
 
 | Contenido | Ubicación |
 |---|---|
-| Informe de la entrega (PDF) | Raíz del repositorio (`informe.pdf`) |
+| Informe de la entrega | `docs/INFORME.md` (text/plain UTF-8) |
 | Código fuente del servidor | `src/server/` (proxy SOCKS5 en `socks5.c`/`socks5.h`, protocolo de monitoreo en `src/server/mgmt/`, y los módulos `users.c`, `metrics.c`, `config.c`, `access_log.c`) |
 | Código fuente del cliente de monitoreo | `src/client/client.c` |
 | Código compartido servidor/cliente | `src/shared/` (parser genérico, máquina de estados, selector de I/O, buffer, utilidades de red, parseo de argumentos) |
