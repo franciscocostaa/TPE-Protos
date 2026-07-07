@@ -1,8 +1,6 @@
 # Documento de Diseño — Proxy SOCKS5 + Protocolo de Monitoreo
 
 > ITBA · Protocolos de Comunicación · TPE 2026/1
-> Estado: **BORRADOR para revisión** — todavía no se commiteó código de implementación
-> en base a este documento.
 
 Este documento es el plano arquitectónico que acordamos *antes* de escribir lógica. Es
 intencionalmente preciso en el lenguaje de implementación (C11) para el proxy, y de
