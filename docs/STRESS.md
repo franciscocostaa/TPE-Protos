@@ -1,8 +1,7 @@
 # Guía de pruebas de estrés — Proxy SOCKS5
 
-> Cubre el requerimiento no funcional NF3 de la consigna: *"¿Cuál es la máxima cantidad de
-> conexiones simultáneas que soporta? ¿Cómo se degrada el throughput?"*. Los resultados van
-> a la sección **"Ejemplos de prueba"** del informe.
+> Mide la máxima cantidad de conexiones simultáneas que soporta el proxy y cómo se degrada
+> el throughput. Los resultados van a la sección **"Ejemplos de prueba"** del informe.
 
 Todo se corre dentro de un contenedor Linux (en Windows no hay `gcc`). Las pruebas apuntan a
 **destinos locales** para no depender de internet ni de terceros. Los números de "Resultados"
@@ -55,7 +54,7 @@ python3 /tmp/httpd.py &
 
 ---
 
-## 1. Máximo de conexiones concurrentes  *(F1: ≥ 500)*
+## 1. Máximo de conexiones concurrentes
 
 **Qué testea:** cuántas conexiones SOCKS **simultáneas** sostiene el proxy antes de rechazar.
 
@@ -93,7 +92,7 @@ informe** — es determinista y reproducible.
 
 ---
 
-## 2. Throughput y su degradación  *(NF3)*
+## 2. Throughput y su degradación
 
 Usa el **destino B (:8001)**.
 
@@ -149,7 +148,7 @@ descriptores**. Chequeo complementario de drenado:
 ## 4. Robustez: conexiones lentas / lecturas parciales
 
 **Qué testea:** que un cliente que manda el handshake **de a un byte, muy lento**, no rompa ni
-cuelgue al proxy (correctitud de lecturas parciales, pass/fail en la consigna), y que muchos
+cuelgue al proxy (correctitud de lecturas parciales), y que muchos
 clientes lentos a la vez no lo tumben. Usa el **destino B**.
 
 ```python
@@ -185,7 +184,7 @@ Corrida en Docker (`gcc:latest`, `--ulimit nofile=8192`), destinos locales. Los 
 absolutos dependen del hardware; lo importante es la **tendencia** y el **techo**.
 
 **1. Máximo de conexiones concurrentes: 510.** Coincide con lo esperado (`FD_SETSIZE`=1024 ÷ 2
-fds por conexión, menos los pasivos). **Supera el mínimo de 500.** Determinista y reproducible.
+fds por conexión, menos los pasivos). Determinista y reproducible.
 
 **2. Throughput (archivo de 100 MB, destino concurrente):**
 

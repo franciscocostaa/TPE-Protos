@@ -1,9 +1,9 @@
 # Trabajo Práctico Especial — Servidor Proxy SOCKS5 + Protocolo de Monitoreo
 
-**Protocolos de Comunicación — ITBA — 2026/1 — Primera entrega**
+**Protocolos de Comunicación — ITBA — 2026/1**
 
 > **Grupo 19** · Integrantes: Roman Salerno (65145), Franco Branda (65506), Francisco Costa (65202).
-> Repositorio: `github.com/franciscocostaa/TPE-Protos` (se entrega con toda su historia git).
+> Repositorio: `github.com/franciscocostaa/TPE-Protos` (incluye toda su historia git).
 
 ---
 
@@ -58,15 +58,13 @@ Características implementadas:
   lecturas parciales, validando contra un store de usuarios con **comparación en tiempo
   constante** (evita fugas por *timing*).
 - **Salida a IPv4, IPv6 y FQDN**: las direcciones literales se conectan directamente; los
-  nombres de dominio se resuelven con `getaddrinfo` en un **hilo auxiliar** (el único uso
-  de hilos permitido por la consigna), que al terminar notifica al hilo principal mediante
-  una señal, sin realizar ninguna otra E/S.
+  nombres de dominio se resuelven con `getaddrinfo` en un **hilo auxiliar** que, al terminar,
+  notifica al hilo principal mediante una señal, sin realizar ninguna otra E/S.
 - **Robustez multi-dirección**: si un FQDN resuelve a varias IPs y una falla, se prueba con
   la siguiente automáticamente.
 - **Códigos de respuesta (REP) específicos**: ante un fallo de conexión se informa el
   código más preciso posible mapeando el `errno` real (`ECONNREFUSED` → conexión rechazada,
-  `ENETUNREACH` → red inalcanzable, `EHOSTUNREACH`/`ETIMEDOUT` → host inalcanzable, etc.),
-  usando "toda la potencia del protocolo".
+  `ENETUNREACH` → red inalcanzable, `EHOSTUNREACH`/`ETIMEDOUT` → host inalcanzable, etc.).
 - **Relay bidireccional** con *backpressure*: dos buffers de tamaño fijo por conexión; se
   lee de un extremo solo si hay lugar y se escribe al otro solo si hay datos, de modo que
   un extremo lento frena al rápido sin acumular memoria sin límite.
@@ -83,7 +81,7 @@ bloqueante. La especificación completa, agnóstica al lenguaje, está en
 |---|---|---|
 | **Transporte** | TCP, multiplexado en el mismo selector del proxy | Confiable; reutiliza la infraestructura no bloqueante. |
 | **Codificación** | **Texto**, líneas terminadas en CRLF, ASCII | Simple de implementar y depurar; suficiente para un canal administrativo de bajo volumen. Inspirado en POP3/SMTP. |
-| **Autenticación** | Token compartido (comando `AUTH`), configurable por línea de comandos | Simple para la primera entrega; separa el canal admin del proxy. |
+| **Autenticación** | Token compartido (comando `AUTH`), configurable por línea de comandos | Separa el canal administrativo del proxy y evita repetir credenciales en cada comando. |
 | **Respuestas** | `+OK`/`-ERR <código>`; respuestas multilínea terminadas en `.` con *dot-stuffing* | Formato inequívoco y parseable, al estilo POP3. |
 
 **Comandos implementados:** `AUTH`, `GET-METRICS`, `LIST-USERS`, `ADD-USER`, `DEL-USER`,
@@ -95,9 +93,9 @@ sin reiniciar el servidor**, y consultar métricas y el registro de accesos.
 
 ### 2.3 Aplicación cliente de monitoreo
 
-`client` es una aplicación de terminal (I/O bloqueante, permitido por su simpleza) que
+`client` es una aplicación de terminal (I/O bloqueante, dada su simpleza) que
 habla el protocolo SMP: se encarga del *handshake*, la autenticación con token, el framing
-CRLF y el *dot-stuffing* de las respuestas multilínea. **No es netcat**: el usuario invoca
+CRLF y el *dot-stuffing* de las respuestas multilínea. El usuario invoca
 verbos ergonómicos (p. ej. `client 127.0.0.1 8080 -t <token> ADD-USER pablito pass1234`) y
 el cliente traduce eso al protocolo.
 
@@ -130,19 +128,13 @@ el cliente traduce eso al protocolo.
 
 - **Techo de ~510 conexiones concurrentes.** El selector usa `select(2)`, limitado por
   `FD_SETSIZE` (típicamente 1024 descriptores). Como cada conexión usa 2 descriptores
-  (cliente + origen), el máximo práctico es ≈ 510 (cumple el mínimo de 500 de la consigna,
-  pero es un techo duro).
+  (cliente + origen), el máximo práctico es ≈ 510 conexiones concurrentes.
 - **Sin timeout de inactividad.** Una conexión que se queda "colgada" (un cliente lento que
-  no cierra) ocupa su lugar indefinidamente. Esto habilita un ataque tipo *slowloris* y
-  puede **demorar el graceful shutdown** (que espera a que drenen las conexiones); la
-  segunda señal fuerza el apagado.
+  no cierra) ocupa su lugar indefinidamente.
 - **Volatilidad.** Las métricas, el registro de accesos (buffer circular de las últimas
-  1024 entradas) y los usuarios son **volátiles**: se pierden al reiniciar. La consigna lo
-  permite para las métricas; los usuarios se siembran por línea de comandos y por el
-  protocolo de monitoreo.
-- **Cliente de monitoreo.** Cumple el requisito de fondo (no es netcat; maneja auth,
-  framing y dot-stuffing), pero el host y el puerto se pasan como argumentos posicionales
-  en lugar de opciones POSIX con nombre.
+  1024 entradas) y los usuarios son **volátiles**: se pierden al reiniciar. 
+- **Cliente de monitoreo.** Maneja auth, framing y dot-stuffing, pero el host y el puerto
+  se pasan como argumentos posicionales en lugar de opciones POSIX con nombre.
 
 ---
 
@@ -150,9 +142,8 @@ el cliente traduce eso al protocolo.
 
 - **`epoll`/`kqueue`** detrás de la misma interfaz de selector para superar el límite de
   `FD_SETSIZE` y escalar más allá de las ~510 conexiones.
-- **Timeouts de inactividad** (reaping de conexiones ociosas) para mitigar *slowloris* y
-  hacer el graceful shutdown acotado en el tiempo.
-- **Sniffer de credenciales POP3** estilo ettercap (segunda entrega, consigna F10).
+- **Timeouts de inactividad**
+- **Sniffer de credenciales POP3** estilo ettercap.
 - **Persistencia** opcional de usuarios y del registro de accesos a archivo.
 - **Métricas adicionales** (bytes por sentido, tasa de fallos de conexión, etc.).
 
@@ -168,7 +159,7 @@ para la robustez. El diseño de un protocolo de aplicación propio (SMP) y su do
 "estilo RFC" ejercitó la capacidad de especificar de forma implementable e inequívoca. Las
 pruebas de estrés confirmaron el comportamiento esperado (techo de conexiones dado por
 `select`, degradación de throughput por el hilo único) y las herramientas de análisis
-(Valgrind, tests unitarios) dieron confianza sobre la ausencia de fugas.
+(Valgrind, tests unitarios) dieron confianza sobre la ausencia de memory leaks.
 
 ---
 
@@ -176,7 +167,7 @@ pruebas de estrés confirmaron el comportamiento esperado (techo de conexiones d
 
 Metodología completa y reproducible en [`docs/STRESS.md`](./STRESS.md). Resumen:
 
-**Tests unitarios (`make test`):** 70 casos en verde, cubriendo los módulos puros
+**Tests unitarios (`make test`):** 68 casos en verde, cubriendo los módulos puros
 (`users`, `metrics`, `config`, `access_log`, incluido el *wraparound* del buffer circular)
 y el dispatch del protocolo de monitoreo (gating por auth, comandos, dot-stuffing).
 
@@ -188,7 +179,7 @@ el cliente de monitoreo; graceful shutdown.
 
 | Métrica | Resultado |
 |---|---|
-| Máximo de conexiones concurrentes | **510** (supera el mínimo de 500; techo por `FD_SETSIZE`) |
+| Máximo de conexiones concurrentes | **510** (techo por `FD_SETSIZE`) |
 | Throughput 1 conexión | 237 MB/s |
 | Throughput 10 / 50 / 100 conexiones (agregado) | 847 / 795 / 700 MB/s |
 | Throughput por conexión (1 → 100) | 237 → 7 MB/s (degrada por el hilo único) |
@@ -315,12 +306,5 @@ sentidos), no los bytes de control del protocolo, por ser más representativa de
 ## Apéndice A — Especificación del protocolo de monitoreo
 
 La especificación completa, en estilo RFC y agnóstica al lenguaje, se encuentra en
-[`docs/PROTOCOL.md`](./PROTOCOL.md) y forma parte de esta entrega (se recomienda incluirla
-como anexo al generar el PDF final).
-
----
-
-> **Nota para el grupo (borrador):** al generar el PDF final (`informe.pdf` en la raíz, como
-> indica el README), concatenar `PROTOCOL.md` como Apéndice A. Conviene revisar/expandir §6
-> (conclusiones) con la experiencia personal del grupo. Los números de estrés de §7 son de
-> una corrida de referencia; conviene re-correr en el entorno de entrega y actualizarlos.
+[`docs/PROTOCOL.md`](./PROTOCOL.md) (se recomienda incluirla como anexo al generar el PDF
+final).

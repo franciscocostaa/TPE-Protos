@@ -1,101 +1,110 @@
-# Design Document — SOCKS5 Proxy + Management Protocol
+# Documento de Diseño — Proxy SOCKS5 + Protocolo de Monitoreo
 
 > ITBA · Protocolos de Comunicación · TPE 2026/1
-> Status: **DRAFT for review** — no implementation code committed against this yet.
+> Estado: **BORRADOR para revisión** — todavía no se commiteó código de implementación
+> en base a este documento.
 
-This document is the architectural blueprint we agree on *before* writing logic. It is
-intentionally implementation-language-precise (C11) for the proxy, and RFC-style /
-language-agnostic for the management protocol we design ourselves.
-
----
-
-## 1. Scope & decisions
-
-**In scope (first entrega):**
-
-- SOCKS5 proxy (RFC 1928) — **CONNECT command only**.
-- Username/password authentication (RFC 1929) **and** the "no authentication" method,
-  selected by configuration.
-- Outbound TCP to **IPv4, IPv6, and FQDN** (resolved to either family).
-- Robust multi-address fallback on connect failure.
-- Full SOCKS reply codes on success/failure.
-- Volatile metrics + access log.
-- A **separate management/monitoring protocol** on its own port + a terminal client.
-- Graceful shutdown (SIGTERM/SIGINT).
-
-**Explicitly out of scope:**
-
-- **BIND** and **UDP ASSOCIATE** → server replies `REP = X'07'` (command not supported).
-  The design keeps the request layer open to adding them later, but we do not build them.
-- GSSAPI authentication (not required by the consigna).
-- POP3 credential sniffing → **second entrega only**, designed for but not built now.
-
-**Key non-functional constraints that drive the architecture:**
-
-- **Single thread**, **non-blocking** sockets, **multiplexed** via one selector.
-  The *only* permitted extra thread is DNS resolution (`getaddrinfo`), which performs no
-  other I/O and only hands results back to the main thread.
-- **Partial read / partial write correctness is pass/fail.** Every byte path must assume
-  `read`/`write` move *fewer* bytes than requested and resume later.
-- Bounded memory: never load a whole stream into RAM; fixed-size relay buffers.
-- C11 (`-std=c11`), builds with `make`, POSIX 1003.1 CLI conventions.
+Este documento es el plano arquitectónico que acordamos *antes* de escribir lógica. Es
+intencionalmente preciso en el lenguaje de implementación (C11) para el proxy, y de
+estilo RFC / agnóstico al lenguaje para el protocolo de monitoreo que diseñamos nosotros
+mismos.
 
 ---
 
-## 2. Repository & build layout
+## 1. Alcance y decisiones
 
-We keep the existing `server / client / shared` split and grow it. Proposed tree:
+**Dentro del alcance (primera entrega):**
+
+- Proxy SOCKS5 (RFC 1928) — **solo el comando CONNECT**.
+- Autenticación usuario/contraseña (RFC 1929) **y** el método "sin autenticación",
+  seleccionado por configuración.
+- TCP saliente hacia **IPv4, IPv6 y FQDN** (resuelto a cualquiera de las dos familias).
+- Fallback robusto a múltiples direcciones ante fallos de conexión.
+- Códigos de respuesta SOCKS completos ante éxito/fallo.
+- Métricas volátiles + registro de accesos.
+- Un **protocolo de monitoreo/administración separado** en su propio puerto + un
+  cliente de terminal.
+- Apagado ordenado (SIGTERM/SIGINT).
+
+**Explícitamente fuera de alcance:**
+
+- **BIND** y **UDP ASSOCIATE** → el servidor responde `REP = X'07'` (comando no
+  soportado). El diseño deja la capa de request abierta para agregarlos más adelante,
+  pero no los construimos ahora.
+- Autenticación GSSAPI (no requerida por la consigna).
+- Sniffing de credenciales POP3 → **solo para la segunda entrega**, contemplado en el
+  diseño pero no construido ahora.
+
+**Restricciones no funcionales clave que guían la arquitectura:**
+
+- **Un solo hilo**, sockets **no bloqueantes**, **multiplexados** mediante un selector.
+  El *único* hilo extra permitido es el de resolución DNS (`getaddrinfo`), que no hace
+  ningún otro I/O y solo devuelve resultados al hilo principal.
+- **La correctitud ante lecturas/escrituras parciales es todo o nada.** Todo camino de
+  bytes debe asumir que `read`/`write` pueden mover *menos* bytes de los pedidos, y
+  reanudar después.
+- Memoria acotada: nunca cargar un stream completo en RAM; buffers de relay de tamaño
+  fijo.
+- C11 (`-std=c11`), se compila con `make`, convenciones POSIX 1003.1 para la CLI.
+
+---
+
+## 2. Estructura del repositorio y del build
+
+Mantenemos la división existente `server / client / shared` y la hacemos crecer. Árbol
+propuesto:
 
 ```
 src/
-  server/        # SOCKS5 proxy + management server (single process)
-    main.c               # arg parsing, signals, listeners, selector loop bootstrap
+  server/        # Proxy SOCKS5 + servidor de monitoreo (un solo proceso)
+    main.c               # parseo de argumentos, señales, listeners, arranque del loop del selector
     socks5/
-      socks5.c/.h        # per-connection state machine (the heart)
-      negotiation.c/.h   # method negotiation parser (RFC 1928 §3)
-      auth.c/.h          # user/pass sub-negotiation parser (RFC 1929)
-      request.c/.h       # request parser (RFC 1928 §4) + reply builder
-      connect.c/.h       # outbound connect + address-list fallback
-      relay.c/.h         # bidirectional copy (the two "halves")
+      socks5.c/.h        # máquina de estados por conexión (el corazón)
+      negotiation.c/.h   # parser de negociación de método (RFC 1928 §3)
+      auth.c/.h          # parser de sub-negociación usuario/contraseña (RFC 1929)
+      request.c/.h       # parser de request (RFC 1928 §4) + constructor de respuesta
+      connect.c/.h       # connect saliente + fallback sobre lista de direcciones
+      relay.c/.h         # copia bidireccional (las dos "mitades")
     mgmt/
-      mgmt.c/.h          # management protocol state machine
+      mgmt.c/.h          # máquina de estados del protocolo de monitoreo
     dns/
-      resolver.c/.h      # async getaddrinfo worker + result delivery
-    metrics.c/.h         # counters (historical/concurrent conns, bytes)
-    access_log.c/.h      # "who connected where and when"
-    users.c/.h           # user store (add/remove/auth), runtime-mutable
-    config.c/.h          # runtime config (timeouts, buffer sizes, auth on/off)
-  client/        # management terminal client (blocking I/O is fine here)
+      resolver.c/.h      # worker asincrónico de getaddrinfo + entrega de resultados
+    metrics.c/.h         # contadores (conexiones históricas/concurrentes, bytes)
+    access_log.c/.h      # "quién se conectó a dónde y cuándo"
+    users.c/.h           # store de usuarios (alta/baja/auth), mutable en runtime
+    config.c/.h          # configuración en runtime (timeouts, tamaños de buffer, auth on/off)
+  client/        # cliente de terminal de monitoreo (acá el I/O bloqueante está bien)
     main.c
-  shared/        # code shared by server & client
-    selector.c/.h        # non-blocking event loop abstraction
-    buffer.c/.h          # partial-read/write-safe byte buffer
-    stm.c/.h             # generic state-machine driver
-    netutils.c/.h        # sockaddr helpers, sock_blocking_*(), etc.
-    args.c/.h            # POSIX-style CLI parsing (reference impl when published)
+  shared/        # código compartido entre servidor y cliente
+    selector.c/.h        # abstracción de loop de eventos no bloqueante
+    buffer.c/.h          # buffer de bytes seguro ante lecturas/escrituras parciales
+    stm.c/.h             # driver genérico de máquina de estados
+    netutils.c/.h        # helpers de sockaddr, sock_blocking_*(), etc.
+    args.c/.h            # parseo de CLI estilo POSIX (implementación de referencia una vez publicada)
 docs/
-  DESIGN.md      # this file
-  PROTOCOL.md    # RFC-style spec of our management protocol (separate deliverable)
+  DESIGN.md      # este archivo
+  PROTOCOL.md    # especificación estilo RFC de nuestro protocolo de monitoreo (entregable separado)
 ```
 
-**Build note (action item):** `Makefile.inc` currently has
-`COMPILER_FLAGS=-Wall -pedantic -g`. The consigna mandates C11, so we must add
-`-std=c11` and a feature-test macro (e.g. `-D_POSIX_C_SOURCE=200809L`) for
-`getaddrinfo`, `sigaction`, etc. We'll also want `-Wextra` and a `-fsanitize=address`
-debug profile for development (not the graded build).
+**Nota de build (acción pendiente):** `Makefile.inc` hoy tiene
+`COMPILER_FLAGS=-Wall -pedantic -g`. La consigna exige C11, así que hay que agregar
+`-std=c11` y una macro de feature-test (p. ej. `-D_POSIX_C_SOURCE=200809L`) para
+`getaddrinfo`, `sigaction`, etc. También conviene `-Wextra` y un perfil de debug con
+`-fsanitize=address` para desarrollo (no para el build que se entrega).
 
-**On third-party code:** the cátedra publishes course material (notably a non-blocking
-`selector` + `buffer` + `stm`). Reusing it is *permitted with attribution*. We will
-either use the published versions verbatim (attributed) or write our own to the same
-shape — to be confirmed before coding. Either way the **SOCKS5 logic is ours**.
+**Sobre código de terceros:** la cátedra publica material de la materia (en particular
+un `selector` + `buffer` + `stm` no bloqueantes). Reutilizarlo está *permitido citando
+la fuente*. Vamos a usar las versiones publicadas tal cual (con atribución) o a escribir
+las nuestras con la misma forma — a confirmar antes de codear. De cualquier manera, la
+**lógica de SOCKS5 es nuestra**.
 
 ---
 
-## 3. Core architecture — one thread, one selector
+## 3. Arquitectura central — un hilo, un selector
 
-Everything is one event loop. There are **no blocking calls** on the data path. The
-loop owns a set of file descriptors, each with an interest set (read/write) and a
-handler. Pseudocode:
+Todo es un único loop de eventos. No hay **ninguna llamada bloqueante** en el data
+path. El loop es dueño de un conjunto de file descriptors, cada uno con un conjunto de
+intereses (lectura/escritura) y un handler. Pseudocódigo:
 
 ```
 selector = selector_new()
@@ -103,210 +112,238 @@ register(socks_listen_fd,  READ, accept_socks)
 register(mgmt_listen_fd,   READ, accept_mgmt)
 register(dns_notify_fd,    READ, on_dns_result)   # self-pipe / eventfd
 while running:
-    selector_select(selector, timeout)   # the ONE place we block, with a timeout
-    for each ready fd: dispatch its handler
-    run expired timeouts (idle connection reaping)
+    selector_select(selector, timeout)   # el ÚNICO lugar donde bloqueamos, con timeout
+    for each ready fd: dispatch its handler          # para cada fd listo: despachar su handler
+    run expired timeouts (idle connection reaping)   # correr timeouts vencidos (limpieza de conexiones idle)
 ```
 
-The selector is backed by `select(2)` for portability (the consigna targets a POSIX
-environment; `select` is fine for the required 500 connections, and the course selector
-uses it). If profiling demands it we can swap the backend behind the same interface.
+El selector está respaldado por `select(2)` por portabilidad (la consigna apunta a un
+entorno POSIX; `select` alcanza para las 500 conexiones requeridas, y el selector de la
+cátedra lo usa). Si el profiling lo exige, se puede cambiar el backend detrás de la
+misma interfaz.
 
-**Why a self-pipe / `eventfd` for DNS:** the DNS worker thread cannot touch our sockets.
-When it finishes `getaddrinfo`, it writes one byte to a pipe that the selector watches;
-the main thread wakes, reads the result from a queue, and resumes that connection's
-state machine. This is the single, carefully-bounded use of threading.
+**Por qué un self-pipe / `eventfd` para DNS:** el hilo worker de DNS no puede tocar
+nuestros sockets. Cuando termina `getaddrinfo`, escribe un byte en un pipe que el
+selector observa; el hilo principal se despierta, lee el resultado de una cola, y
+retoma la máquina de estados de esa conexión. Este es el único uso de threading,
+cuidadosamente acotado.
 
 ---
 
-## 4. The buffer abstraction (partial I/O correctness)
+## 4. La abstracción de buffer (correctitud de I/O parcial)
 
-A `buffer` is a fixed byte array with `read`/`write` pointers, exposing:
+Un `buffer` es un arreglo de bytes de tamaño fijo con punteros de `read`/`write`, que
+expone:
 
 ```
-buffer_write_ptr(b, &n)  -> where to recv() into, and how much room (n)
-buffer_write_adv(b, k)   -> we actually received k bytes
-buffer_read_ptr(b, &n)   -> where to send() from, and how much is pending (n)
-buffer_read_adv(b, k)    -> we actually sent k bytes
-buffer_can_read/write()  -> predicates
-buffer_compact()         -> reclaim consumed space
+buffer_write_ptr(b, &n)  -> dónde hacer recv(), y cuánto lugar hay (n)
+buffer_write_adv(b, k)   -> efectivamente recibimos k bytes
+buffer_read_ptr(b, &n)   -> desde dónde hacer send(), y cuánto queda pendiente (n)
+buffer_read_adv(b, k)    -> efectivamente enviamos k bytes
+buffer_can_read/write()  -> predicados
+buffer_compact()         -> recupera el espacio ya consumido
 ```
 
-Every parser consumes from a buffer and **must tolerate running out of bytes mid-message**
-— it returns "need more data" and is re-entered when the next chunk arrives. Every writer
-**must tolerate a short `send`** — it advances the read pointer by the bytes actually
-written and re-arms `WRITE` interest for the rest. This is the mechanism that makes
-partial I/O correct *by construction* rather than by ad-hoc patching.
+Todo parser consume de un buffer y **debe tolerar quedarse sin bytes a mitad de un
+mensaje** — devuelve "necesito más datos" y se re-entra cuando llega el próximo pedazo.
+Todo escritor **debe tolerar un `send` corto** — avanza el puntero de lectura por los
+bytes efectivamente escritos y rearma el interés de `WRITE` por el resto. Este es el
+mecanismo que hace que el I/O parcial sea correcto *por construcción*, en vez de a
+fuerza de parches ad-hoc.
 
 ---
 
-## 5. SOCKS5 connection state machine
+## 5. Máquina de estados de la conexión SOCKS5
 
-Each accepted client connection is one state machine instance (driven by `stm`). States,
-mapping directly to RFC 1928 / 1929:
+Cada conexión de cliente aceptada es una instancia de máquina de estados (manejada por
+`stm`). Los estados, mapeados directamente a RFC 1928 / 1929:
 
 ```
-                       (read)            (read/write)
+                       (lectura)         (lectura/escritura)
 NEGOTIATION_READ ───▶ NEGOTIATION_WRITE ───▶ AUTH_READ ───▶ AUTH_WRITE
-   |  RFC1928 §3 method list      reply X'05',method        RFC1929 sub-neg
+   |  lista de métodos RFC1928 §3   responde X'05',method   sub-neg RFC1929
    |                                                              |
    ▼                                                              ▼
 REQUEST_READ ───▶ RESOLVING ───▶ CONNECTING ───▶ REQUEST_WRITE ───▶ RELAY
-  RFC1928 §4    async DNS      try addr list,    reply REP,...      copy both
-  parse req     (if FQDN)      fallback on fail   bind addr         directions
-                                                                      |
-                                                                      ▼
+ parsea req      DNS async     prueba lista de   responde REP,...   copia ambas
+ RFC1928 §4      (si FQDN)     direcc., fallback  bind addr          direcciones
+                                si falla                               |
+                                                                        ▼
                                                                     DONE / ERROR
 ```
 
-- **NEGOTIATION:** read `VER, NMETHODS, METHODS`; pick `NO_AUTH (0x00)` or
-  `USER_PASS (0x02)` per config; reply `VER=0x05, METHOD`. If none acceptable → `0xFF`
-  and close.
-- **AUTH (only if USER_PASS chosen):** read `VER=0x01, ULEN, UNAME, PLEN, PASSWD`;
-  validate against the user store; reply `VER=0x01, STATUS` (`0x00` ok, else close).
-- **REQUEST:** read `VER, CMD, RSV, ATYP, DST.ADDR, DST.PORT`. If `CMD != CONNECT` →
-  reply `REP=0x07`. Branch on `ATYP`: IPv4 / IPv6 → connect directly; DOMAINNAME →
-  enter `RESOLVING`.
-- **RESOLVING:** hand the FQDN to the DNS worker; park the connection (no fd interest)
-  until the self-pipe wakes us with an addrinfo list.
-- **CONNECTING:** non-blocking `connect()` to the first address; on `EINPROGRESS` watch
-  `WRITE`; on failure (`SO_ERROR`) advance to the **next address** in the list
-  (robustness requirement). When the list is exhausted, reply with the most specific
-  `REP` we can (host unreachable `0x04`, connection refused `0x05`, network unreachable
-  `0x03`, general `0x01`).
-- **REQUEST_WRITE:** send the reply (`REP=0x00` + bound address/port) then enter relay.
-- **RELAY:** see §6.
+- **NEGOTIATION:** lee `VER, NMETHODS, METHODS`; elige `NO_AUTH (0x00)` o
+  `USER_PASS (0x02)` según config; responde `VER=0x05, METHOD`. Si ninguno es
+  aceptable → `0xFF` y cierra.
+- **AUTH (solo si se eligió USER_PASS):** lee `VER=0x01, ULEN, UNAME, PLEN, PASSWD`;
+  valida contra el store de usuarios; responde `VER=0x01, STATUS` (`0x00` ok, si no,
+  cierra).
+- **REQUEST:** lee `VER, CMD, RSV, ATYP, DST.ADDR, DST.PORT`. Si `CMD != CONNECT` →
+  responde `REP=0x07`. Bifurca según `ATYP`: IPv4 / IPv6 → conecta directamente;
+  DOMAINNAME → entra a `RESOLVING`.
+- **RESOLVING:** entrega el FQDN al worker de DNS; deja la conexión parqueada (sin
+  interés de fd) hasta que el self-pipe nos despierte con una lista de addrinfo.
+- **CONNECTING:** `connect()` no bloqueante a la primera dirección; ante
+  `EINPROGRESS` observa `WRITE`; ante fallo (`SO_ERROR`) avanza a la **siguiente
+  dirección** de la lista (requisito de robustez). Cuando se agota la lista, responde
+  con el `REP` más específico posible (host unreachable `0x04`, connection refused
+  `0x05`, network unreachable `0x03`, general `0x01`).
+- **REQUEST_WRITE:** envía la respuesta (`REP=0x00` + dirección/puerto bindeado) y
+  entra al relay.
+- **RELAY:** ver §6.
 
-Each state owns: `on_arrival`, `on_read_ready`, `on_write_ready`, `on_block`, `on_departure`.
-
----
-
-## 6. The relay — two coupled halves
-
-Once established, a session has two sockets (client `C`, origin `O`) and **two buffers**:
-`C→O` and `O→C`. Interest registration is data-driven:
-
-- We want to **read** from `C` only if the `C→O` buffer has room.
-- We want to **write** to `O` only if the `C→O` buffer has pending bytes.
-- Symmetrically for the `O→C` direction.
-
-This naturally applies **backpressure**: a slow origin stops us reading from a fast
-client (no unbounded buffering — satisfies the bounded-memory requirement). Bytes
-transferred are tallied here for metrics. Half-close (`EOF` on one side) shuts down the
-corresponding direction with `shutdown()` and tears the session down once both
-directions drain.
+Cada estado tiene: `on_arrival`, `on_read_ready`, `on_write_ready`, `on_block`,
+`on_departure`.
 
 ---
 
-## 7. DNS resolution (the one allowed thread)
+## 6. El relay — dos mitades acopladas
 
-- FQDN requests are queued to a small worker (a dedicated thread, or `getaddrinfo_a`).
-- The worker calls `getaddrinfo` (which may block) and pushes `(conn_id, struct
-  addrinfo*)` onto a result queue, then writes one byte to the selector's self-pipe.
-- The main thread drains the queue on wakeup and resumes each parked connection.
-- The worker touches **no sockets** and does **no other I/O** — exactly as the consigna
-  permits. We hint `AI_ADDRCONFIG` and request both families so the fallback list (§5
-  CONNECTING) is populated.
+Una vez establecida, una sesión tiene dos sockets (cliente `C`, origen `O`) y **dos
+buffers**: `C→O` y `O→C`. El registro de intereses está guiado por los datos:
 
----
+- Queremos **leer** de `C` solo si el buffer `C→O` tiene lugar.
+- Queremos **escribir** en `O` solo si el buffer `C→O` tiene bytes pendientes.
+- Simétricamente para la dirección `O→C`.
 
-## 8. Management / monitoring protocol (our design — separate deliverable)
-
-A second passive socket on its own port, same process, same selector. **Not** a SOCKS
-extension. Full byte-level spec goes in `docs/PROTOCOL.md`; the high-level design intent:
-
-- **Transport:** TCP, multiplexed in the same non-blocking loop as the proxy.
-- **Encoding:** *proposed* compact **binary** request/response (length-prefixed frames)
-  for the wire, with the **client** translating ergonomic commands
-  (`client add-user pablito pass1234`) into frames. We will justify binary-vs-text in the
-  report. (Open for discussion — a line-based text protocol is simpler to debug; binary
-  is more "in the spirit" of the course. Decision pending.)
-- **Capabilities:** authenticate; list/add/remove proxy users; toggle auth method; read
-  metrics (historical conns, concurrent conns, bytes); get/set runtime config (timeouts,
-  buffer sizes); tail/query access log.
-- **Auth:** the management channel has its own admin credentials (decision pending:
-  shared-secret token vs. admin user table). The client handles the auth handshake; it is
-  *not* netcat-friendly by design (per the consigna's explicit prohibition).
-- The client **may use blocking I/O** (it's simple and sequential).
+Esto aplica **backpressure** de forma natural: un origen lento nos frena de leer de un
+cliente rápido (sin buffering ilimitado — satisface el requisito de memoria acotada).
+Los bytes transferidos se contabilizan acá para las métricas. Un half-close (`EOF` de
+un lado) cierra la dirección correspondiente con `shutdown()` y termina la sesión una
+vez que ambas direcciones drenaron.
 
 ---
 
-## 9. Cross-cutting modules
+## 7. Resolución DNS (el único hilo permitido)
 
-- **users:** in-memory store, runtime-mutable via the mgmt protocol. Passwords compared
-  constant-time. (Persistence optional — metrics may be volatile; users likely seeded by
-  CLI + mgmt additions.)
-- **metrics:** plain counters updated on the data path; read by mgmt. Volatile by spec.
-- **access_log:** append a structured record per established connection — timestamp,
-  username, client addr, target (FQDN/IP + port), bytes, outcome. Designed to answer the
-  "external complaint" query.
-- **config:** a single struct read by the data path, mutated only by the main thread
-  (no locks needed — single-threaded), exposed via mgmt.
-
----
-
-## 10. Signals & graceful shutdown
-
-- `SIGTERM` / `SIGINT` handled via `sigaction`; the handler only sets a `volatile
-  sig_atomic_t` flag (and/or writes the self-pipe to break `select`). No real work in the
-  handler.
-- On flag: stop accepting (close/unregister the listen fds), let in-flight sessions
-  drain, then exit cleanly (free buffers, close fds, join the DNS worker).
-- A **second** signal may force immediate exit.
+- Los pedidos de FQDN se encolan a un worker chico (un hilo dedicado, o
+  `getaddrinfo_a`).
+- El worker llama a `getaddrinfo` (que puede bloquear) y encola
+  `(conn_id, struct addrinfo*)` en una cola de resultados, y después escribe un byte en
+  el self-pipe del selector.
+- El hilo principal drena la cola al despertarse y retoma cada conexión parqueada.
+- El worker no toca **ningún socket** y no hace **ningún otro I/O** — exactamente como
+  lo permite la consigna. Sugerimos `AI_ADDRCONFIG` y pedimos ambas familias para que
+  la lista de fallback (§5 CONNECTING) quede poblada.
 
 ---
 
-## 11. CLI & POSIX conventions
+## 8. Protocolo de monitoreo/administración (diseño propio — entregable separado)
 
-Both binaries follow IEEE 1003.1 utility conventions (the reference arg parser, once
-published, drops into `shared/args`). Anticipated server options: SOCKS port, management
-port, bind address, initial users, log destination, buffer size, `-h`/`-v`. The client
-takes the management host/port + a subcommand verb.
+Un segundo socket pasivo en su propio puerto, mismo proceso, mismo selector. **No** es
+una extensión de SOCKS. La especificación completa a nivel de bytes va en
+`docs/PROTOCOL.md`; acá la intención de diseño de alto nivel:
 
----
-
-## 12. Error-handling philosophy (the "no weak patches" rule)
-
-- Every syscall return is checked; `EAGAIN/EWOULDBLOCK/EINPROGRESS/EINTR` are *expected
-  control flow*, not errors, and handled explicitly.
-- Failures propagate to the SOCKS state machine, which emits the **most specific REP code**
-  rather than a generic one (the consigna asks us to use "the full power of the protocol").
-- No silent `catch-and-continue`; no fixed-size assumptions that "usually" hold. Parsers
-  are length-driven and bounded.
-- Resource ownership is explicit per connection; teardown frees everything exactly once.
-
----
-
-## 13. Testing & stress
-
-- Unit tests for the pure parsers (negotiation/auth/request) — they're table-driven and
-  partial-input-driven, so we can feed byte-at-a-time to prove partial-read correctness.
-- Interop tests against a real SOCKS5 client (`curl --socks5`, browsers).
-- Stress: ramp concurrent connections past 500, measure throughput degradation and max
-  sustained connections for the report's required stress section.
+- **Transporte:** TCP, multiplexado en el mismo loop no bloqueante que el proxy.
+- **Codificación:** *propuesta*: request/response **binario** compacto (frames con
+  largo prefijado) para el wire, con el **cliente** traduciendo comandos ergonómicos
+  (`client add-user pablito pass1234`) a frames. Vamos a justificar binario-vs-texto en
+  el informe. (Abierto a discusión — un protocolo de texto por líneas es más simple de
+  depurar; binario está más "en el espíritu" de la materia. Decisión pendiente.)
+- **Capacidades:** autenticar; listar/agregar/quitar usuarios del proxy; alternar el
+  método de auth; leer métricas (conexiones históricas, conexiones concurrentes,
+  bytes); leer/setear configuración en runtime (timeouts, tamaños de buffer);
+  consultar/seguir el registro de accesos.
+- **Auth:** el canal de administración tiene sus propias credenciales de admin
+  (decisión pendiente: token de secreto compartido vs. tabla de usuarios admin). El
+  cliente maneja el handshake de autenticación; *no* es netcat-friendly por diseño
+  (según la prohibición explícita de la consigna).
+- El cliente **puede usar I/O bloqueante** (es simple y secuencial).
 
 ---
 
-## 14. Suggested build order (milestones)
+## 9. Módulos transversales
 
-Each milestone is independently reviewable; we run `ecc:cpp-reviewer` after each.
-
-1. **Foundation:** fix `Makefile.inc` (C11 + flags), bring in `selector` + `buffer` +
-   `stm`, a trivial echo server proving the non-blocking loop works.
-2. **SOCKS negotiation + auth:** method negotiation and RFC 1929 user/pass against a
-   static user store. No relay yet.
-3. **Request + CONNECT (IPv4/IPv6) + relay:** full data path to literal IP targets.
-4. **DNS + fallback:** async resolver thread, FQDN targets, multi-address robustness.
-5. **Metrics + access log + graceful shutdown.**
-6. **Management protocol + client** (and `docs/PROTOCOL.md`).
-7. **Hardening + stress tests + report.**
+- **users:** store en memoria, mutable en runtime vía el protocolo de mgmt. Las
+  contraseñas se comparan en tiempo constante. (Persistencia opcional — las métricas
+  pueden ser volátiles; los usuarios probablemente se cargan por CLI + altas por
+  mgmt.)
+- **metrics:** contadores simples actualizados en el data path; leídos por mgmt.
+  Volátiles según la especificación.
+- **access_log:** agrega un registro estructurado por cada conexión establecida —
+  timestamp, usuario, dirección del cliente, destino (FQDN/IP + puerto), bytes,
+  resultado. Pensado para responder a la consulta de "queja externa".
+- **config:** un único struct leído por el data path, mutado solo por el hilo
+  principal (no hacen falta locks — es single-threaded), expuesto vía mgmt.
 
 ---
 
-## 15. Open questions (need your call before/at coding time)
+## 10. Señales y apagado ordenado
 
-1. **Selector/buffer source:** reuse the cátedra's published `selector`/`buffer`/`stm`
-   (attributed) or write our own to the same interface?
-2. **Management wire format:** binary length-prefixed frames vs. line-based text?
-3. **Management auth model:** shared admin token vs. admin user table?
-4. **User persistence:** purely volatile + CLI-seeded, or persisted to a file?
+- `SIGTERM` / `SIGINT` manejadas vía `sigaction`; el handler solo setea un flag
+  `volatile sig_atomic_t` (y/o escribe el self-pipe para romper el `select`). Sin
+  trabajo real dentro del handler.
+- Con el flag activo: dejar de aceptar (cerrar/desregistrar los fd de listen), dejar
+  drenar las sesiones en curso, y salir prolijamente (liberar buffers, cerrar fds,
+  hacer join del worker de DNS).
+- Una **segunda** señal puede forzar la salida inmediata.
+
+---
+
+## 11. CLI y convenciones POSIX
+
+Ambos binarios siguen las convenciones de utilidades IEEE 1003.1 (el parser de
+argumentos de referencia, una vez publicado, entra en `shared/args`). Opciones
+previstas para el servidor: puerto SOCKS, puerto de management, dirección de bind,
+usuarios iniciales, destino del log, tamaño de buffer, `-h`/`-v`. El cliente toma
+host/puerto de management + un verbo de subcomando.
+
+---
+
+## 12. Filosofía de manejo de errores (la regla de "nada de parches débiles")
+
+- Se chequea el valor de retorno de cada syscall; `EAGAIN/EWOULDBLOCK/EINPROGRESS/EINTR`
+  son *flujo de control esperado*, no errores, y se manejan explícitamente.
+- Los fallos se propagan a la máquina de estados de SOCKS, que emite el **código REP
+  más específico** posible en vez de uno genérico (la consigna pide usar "toda la
+  potencia del protocolo").
+- Nada de `catch-and-continue` silencioso; ninguna suposición de tamaño fijo que
+  "usualmente" se cumple. Los parsers están guiados por longitud y son acotados.
+- La propiedad de los recursos es explícita por conexión; el teardown libera todo
+  exactamente una vez.
+
+---
+
+## 13. Testing y estrés
+
+- Tests unitarios para los parsers puros (negotiation/auth/request) — están guiados
+  por tablas y por input parcial, así que podemos alimentarlos byte a byte para probar
+  la correctitud ante lecturas parciales.
+- Tests de interoperabilidad contra un cliente SOCKS5 real (`curl --socks5`,
+  navegadores).
+- Estrés: escalar conexiones concurrentes por encima de 500, medir la degradación de
+  throughput y la cantidad máxima de conexiones sostenidas, para la sección de estrés
+  requerida en el informe.
+
+---
+
+## 14. Orden de construcción sugerido (hitos)
+
+Cada hito es revisable de forma independiente; corremos `ecc:cpp-reviewer` después de
+cada uno.
+
+1. **Fundación:** arreglar `Makefile.inc` (C11 + flags), incorporar `selector` +
+   `buffer` + `stm`, un echo server trivial que pruebe que el loop no bloqueante
+   funciona.
+2. **Negociación SOCKS + auth:** negociación de método y usuario/contraseña RFC 1929
+   contra un store de usuarios estático. Todavía sin relay.
+3. **Request + CONNECT (IPv4/IPv6) + relay:** data path completo hacia destinos con IP
+   literal.
+4. **DNS + fallback:** hilo resolver asincrónico, destinos FQDN, robustez
+   multi-dirección.
+5. **Métricas + access log + apagado ordenado.**
+6. **Protocolo de monitoreo + cliente** (y `docs/PROTOCOL.md`).
+7. **Hardening + tests de estrés + informe.**
+
+---
+
+## 15. Preguntas abiertas (necesitan una decisión antes de/al momento de codear)
+
+1. **Origen de selector/buffer:** ¿reutilizamos el `selector`/`buffer`/`stm` publicado
+   por la cátedra (con atribución) o escribimos el nuestro con la misma interfaz?
+2. **Formato de wire de monitoreo:** ¿frames binarios con largo prefijado vs. texto por
+   líneas?
+3. **Modelo de auth de monitoreo:** ¿token de admin compartido vs. tabla de usuarios
+   admin?
+4. **Persistencia de usuarios:** ¿puramente volátil + cargados por CLI, o persistidos
+   en un archivo?

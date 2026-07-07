@@ -1,11 +1,9 @@
 # SMP — SOCKS Management Protocol, versión 1.0
 
 > ITBA · Protocolos de Comunicación · TPE 2026/1
-> Especificación del **protocolo de monitoreo y configuración** (consigna F7 / NF5).
-> Estado: **BORRADOR (MF0)** — el catálogo de comandos está congelado; los detalles de
-> `GET-LOG` dependen de un cambio de contrato pendiente con Persona C (ver §10).
+> Especificación del **protocolo de monitoreo y configuración**.
 
-Este documento describe, de forma **agnóstica al lenguaje de programación**, un protocolo
+Este documento describe un protocolo
 de aplicación para administrar y monitorear el servidor proxy SOCKS5 en tiempo de
 ejecución, sin reiniciarlo. Es un protocolo **nuevo e independiente** de SOCKS5: corre en
 otro socket pasivo, en otro puerto, dentro del mismo proceso. Cualquiera que lea este
@@ -23,12 +21,11 @@ el [RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
 | **Transporte** | TCP, multiplexado en el mismo selector no bloqueante del proxy. | Confiable y orientado a conexión; reutiliza la infraestructura existente. |
 | **Codificación** | **Texto**, líneas terminadas en CRLF, ASCII. | Simple de implementar, depurable con `telnet`/`nc`, y suficiente para un canal administrativo de bajo volumen. Inspirado en POP3/SMTP. |
 | **Modelo** | Petición/respuesta sincrónico (un request → una response), sobre una conexión persistente. | El cliente es secuencial; no hace falta pipelining ni IDs de correlación. |
-| **Autenticación** | **Token compartido** enviado en el comando `AUTH`. | Suficiente para la primera entrega; el secreto se configura por línea de comandos en servidor y cliente (ver §10). |
+| **Autenticación** | **Token compartido** enviado en el comando `AUTH`. | El secreto se configura por línea de comandos en servidor (`-t`) y se pasa al cliente (`client ... -t <token>`). Sin `-t`, el servidor usa un token de desarrollo compilado por defecto. |
 | **Estado** | Con estado: la conexión arranca *no autenticada* y pasa a *autenticada* tras un `AUTH` válido. | Evita repetir credenciales en cada comando. |
 
 > El cliente de monitoreo NO es `netcat`: traduce subcomandos ergonómicos
-> (p. ej. `client add-user pablito pass1234`) a las líneas de este protocolo, como exige
-> la consigna (NF5). Que el wire sea legible es una ventaja de depuración, no un sustituto
+> (p. ej. `client add-user pablito pass1234`) a las líneas de este protocolo. Que el wire sea legible es una ventaja de depuración, no un sustituto
 > del cliente.
 
 ---
@@ -190,14 +187,14 @@ Mapea a `users_remove()`.
 
 ### 5.5 `GET-METRICS` **[A]**
 
-Devuelve los contadores volátiles (consigna F6). Respuesta de una línea, `clave=valor`:
+Devuelve los contadores volátiles. Respuesta de una línea, `clave=valor`:
 
 ```
 +OK connections-total=42 connections-current=3 bytes-transferred=190245
 ```
 
-Las claves son las de §3.4 de este doc (`connections-total`, `connections-current`,
-`bytes-transferred`). Mapea a `metrics_get()`.
+Las claves (`connections-total`, `connections-current`, `bytes-transferred`) están
+definidas en `mgmt_proto.h`. Mapea a `metrics_get()`.
 
 ### 5.6 `GET-CONFIG` **[A]**
 
@@ -222,12 +219,12 @@ Cambia un parámetro de configuración en runtime.
 
 Mapea a `config_set_auth_required()`.
 
-> Nota de alcance: esta implementación cubre la **primera entrega**. El sniffer de
-> credenciales (consigna F10) es de la segunda entrega y queda fuera.
+> Nota de alcance: el sniffer de credenciales (estilo ettercap) queda fuera del alcance de
+> esta implementación.
 
 ### 5.8 `GET-LOG` **[A]**
 
-Devuelve el registro de accesos (consigna F8) como respuesta multilínea, una entrada por
+Devuelve el registro de accesos como respuesta multilínea, una entrada por
 línea, con formato tabular separado por TAB:
 
 ```
@@ -237,8 +234,8 @@ línea, con formato tabular separado por TAB:
 ```
 
 Campos (en orden): timestamp ISO-8601 UTC, usuario (`-` si NO-AUTH), `cliente_ip:puerto`,
-`destino:puerto`, código REP de SOCKS. **Pendiente (§10):** requiere una API de lectura en
-`access_log.h` que hoy no existe.
+`destino:puerto`, código REP de SOCKS. Mapea a `access_log_count()` / `access_log_get()`
+(`access_log.h`).
 
 ### 5.9 `HELP` **[N]**
 
@@ -312,16 +309,12 @@ simpleza, PUEDE usar I/O bloqueante.
 - Sin cifrado: el canal administrativo viaja en claro. Pensado para una red de
   administración confiable; una extensión PODRÍA envolverlo en TLS.
 - Token único compartido, sin roles ni auditoría por administrador.
-
----
-
-## 10. Dependencias pendientes con el resto del grupo
-
-1. **Token del canal admin (Persona C / `args`):** `struct socks5args` (`args.h`) hoy no
-   tiene campo para el token de management. Se necesita agregar uno (p. ej. `mng_token`) y
-   una opción de línea de comandos. Hasta entonces, `AUTH` se puede probar contra un valor
-   compilado por defecto.
-2. **Lectura del access log (Persona C / `access_log.h`):** el contrato actual sólo expone
-   `access_log_record()` (escritura). `GET-LOG` (§5.8) requiere una API de lectura/iteración.
-   Se implementa en MF5; se acuerda la firma con C antes.
-```
+- **Sin pipelining real.** El modelo (§1) es petición/respuesta secuencial y el cliente de
+  referencia (`client.c`) nunca envía un comando sin haber leído la respuesta del anterior.
+  Si un cliente ad-hoc (p. ej. pegar varias líneas de una vez en `nc`/`telnet`) envía más de
+  una línea completa en un mismo segmento TCP, el servidor despacha la primera y las
+  siguientes quedan bufferizadas sin respuesta hasta que llegue algún byte adicional del
+  cliente: la relectura del buffer de entrada sólo se dispara ante un nuevo evento de
+  lectura del selector, no inmediatamente después de escribir una respuesta. No afecta al
+  uso normal (un comando por vez), pero un cliente que pipelinee deliberadamente PUEDE
+  observar respuestas demoradas o, en el peor caso, aparentemente colgadas.
