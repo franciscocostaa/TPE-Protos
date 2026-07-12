@@ -1,6 +1,16 @@
 COMPILER=gcc
 
-COMPILER_FLAGS=-std=c11 -pedantic -Wall -Wextra -g -pthread -Isrc/shared/include -Isrc/server/include -Isrc/server/mgmt/include -Isrc/shared -Isrc/server
+# Flags comunes a todos los perfiles (sin optimización ni símbolos de debug).
+COMPILER_FLAGS=-std=c11 -pedantic -Wall -Wextra -pthread -Isrc/shared/include -Isrc/server/include -Isrc/server/mgmt/include -Isrc/shared -Isrc/server
+
+# Perfil de compilación:
+#   - release (por defecto): optimizado (-O2) y SIN símbolos de debug.
+#   - debug   (make DEBUG=1): sin optimizar y con -g para gdb/valgrind.
+ifeq ($(DEBUG),1)
+	COMPILER_FLAGS+=-O0 -g
+else
+	COMPILER_FLAGS+=-O2
+endif
 
 # Para exponer las funciones POSIX/BSD (sigaction, pthread_kill, getaddrinfo, ...)
 # bajo -std=c11 cada SO necesita algo distinto:
