@@ -1,3 +1,0 @@
-# Normaliza los fines de línea a LF en el repositorio, sin importar el SO en el
-# que se edite. Evita el ruido de diffs CRLF<->LF que se coló en entregas previas.
-* text=auto eol=lf
