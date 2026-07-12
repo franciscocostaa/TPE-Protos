@@ -9,9 +9,6 @@
  * Es un protocolo NUEVO (no una extensión de SOCKS) que escucha en otro socket
  * pasivo, en otro puerto, dentro del mismo proceso y multiplexado en el mismo
  * selector. Permite manejar usuarios y cambiar configuración en runtime.
- *
- * PLACEHOLDER del commit de bases: por ahora sólo acepta y cierra. La MEF real
- * y la documentación estilo-RFC (docs/PROTOCOL.md) las hace Persona B.
  */
 
 /**

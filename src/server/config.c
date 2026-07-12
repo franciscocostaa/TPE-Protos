@@ -1,8 +1,7 @@
 /**
- * config.c - implementación mínima de la config global (ver config.h).
+ * config.c - implementación de la config global (ver config.h).
  *
- * STUB del commit de bases: estructura y getters/setters listos para que el
- * data-path y mgmt los consuman. Dueño: Persona C.
+ * Estructura y getters/setters que consumen el data-path y el mgmt.
  */
 #include <string.h>
 

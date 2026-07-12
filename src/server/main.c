@@ -98,7 +98,7 @@ create_passive_socket(const char *bind_addr, const unsigned short port, const ch
         close(fd);
         return -1;
     }
-    if (listen(fd, MAX_PENDING_CONNECTIONS) < 0) { //maybe we should change 
+    if (listen(fd, MAX_PENDING_CONNECTIONS) < 0) {
         *err_msg = "fallo en listen()";
         close(fd);
         return -1;
@@ -117,7 +117,7 @@ main(const int argc, char **argv) {
     struct socks5args args;
     parse_args(argc, argv, &args);
 
-    /* Inicialización de los módulos compartidos (ver docs/PLAN.md). */
+    /* Inicialización de los módulos compartidos. */
     users_init();
     metrics_init();
     access_log_init();
@@ -128,7 +128,7 @@ main(const int argc, char **argv) {
     }
     const struct config initial_cfg = {
         /* si se cargaron usuarios, por defecto exigimos autenticación */
-        .auth_required      = users_count() > 0, //check if this approach is right
+        .auth_required      = users_count() > 0,
         .io_buffer_size     = SOCKS5_BUFFER_SIZE,
     };
     config_init(&initial_cfg);
@@ -148,7 +148,7 @@ main(const int argc, char **argv) {
     fd_selector     selector    = NULL;
     int             socks_fd    = -1;
     int             mgmt_fd     = -1;
-    bool            accepting   = true; //this is great for graceful shutdown, we can use it to stop accepting new connections when we receive a signal
+    bool            accepting   = true; /* en el graceful shutdown pasa a false para dejar de aceptar conexiones */
 
     socks_fd = create_passive_socket(args.socks_addr, args.socks_port, &err_msg);
     if (socks_fd < 0) {
@@ -168,7 +168,7 @@ main(const int argc, char **argv) {
     };
     if (selector_init(&conf) != 0) {
         err_msg = "no se pudo inicializar el selector";
-        goto finally; //marcelo wouldnt be proud about this :), i like it
+        goto finally;
     }
 
     selector = selector_new(SELECTOR_INITIAL_ELEMENTS);

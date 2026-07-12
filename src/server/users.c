@@ -1,8 +1,7 @@
 /**
  * users.c - store de usuarios en memoria (ver users.h).
  *
- * Implementación funcional del commit de bases: arreglo estático de hasta
- * USERS_MAX entradas. Dueño: Persona C. (A futuro: persistencia opcional.)
+ * Arreglo estático de hasta USERS_MAX entradas.
  */
 #include <string.h>
 

@@ -10,9 +10,6 @@
  * Vive una única instancia global. Como todo el data-path corre en un solo
  * hilo, las lecturas/escrituras no necesitan locks. El protocolo de monitoreo
  * (mgmt) muta esta config; el data-path (socks5) la lee.
- *
- * CONTRATO COMPARTIDO — ver docs/PLAN.md §3.4. Cambiar esta interfaz requiere
- * avisar al grupo.
  */
 struct config {
     bool     auth_required;       /* false => se acepta el método NO-AUTH */

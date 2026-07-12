@@ -108,8 +108,6 @@ typedef enum {
  */
 #define INTEREST_OFF(FLAG, MASK)  ( (FLAG) & ~(MASK) )
 
-
-// fucking pretty how it sets the struct, and then uses it to declare the handlers parameters, i like it, its very clean and readable
 /**
  * Argumento de todas las funciones callback del handler
  */

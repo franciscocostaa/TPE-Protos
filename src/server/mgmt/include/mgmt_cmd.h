@@ -39,7 +39,7 @@ struct mgmt_session {
  * @brief Fija el token del canal administrativo (lo compara el comando AUTH).
  *
  * Si no se llama nunca, rige un default compilado (ver mgmt_cmd.c). Pensado para
- * que main.c lo cablee desde los argumentos de línea de comandos (handoff con C).
+ * que main.c lo cablee desde los argumentos de línea de comandos.
  *
  * @param token Nuevo token. Si es NULL no se modifica el valor vigente.
  */

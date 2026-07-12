@@ -39,9 +39,9 @@ static char admin_token[MGMT_TOKEN_MAX + 1] = MGMT_TOKEN_DEFAULT;
  * ------------------------------------------------------------------ */
 
 /**
- * Encola la cadena `s` en el buffer de salida. MF1: las respuestas son chicas y
- * entran de sobra; si no hubiera espacio se trunca (se documenta como
- * limitación de MF1; el streaming de respuestas grandes llega con LIST-USERS).
+ * Encola la cadena `s` en el buffer de salida. Las respuestas caben de sobra; si
+ * no hubiera espacio se trunca (limitación conocida; el fix de fondo sería
+ * streamear las respuestas grandes a medida que el buffer se drena).
  */
 static void
 emit_str(buffer *out, const char *s) {
@@ -325,8 +325,8 @@ cmd_get_log(int argc, char *argv[], buffer *out) {
                                e->dest_port,
                                e->rep);
 
-        /* MF1 no tiene streaming: el write buffer es acotado. Si esta línea más
-         * el terminador no entran, cortamos limpio (la respuesta siempre cierra
+        /* El write buffer es acotado (sin streaming). Si esta línea más el
+         * terminador no entran, cortamos limpio (la respuesta siempre cierra
          * con el '.'). Invariante: al entrar acá siempre quedan >= 3 bytes para
          * el terminador, porque cada línea emitida deja ese margen. */
         size_t space;

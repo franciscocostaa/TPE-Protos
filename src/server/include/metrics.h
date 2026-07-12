@@ -8,8 +8,6 @@
  *
  * Los actualiza el data-path (connection/relay) y los lee el protocolo de
  * monitoreo. Volátiles por especificación: se pierden al reiniciar.
- *
- * CONTRATO COMPARTIDO — ver docs/PLAN.md §3.2.
  */
 struct metrics_snapshot {
     uint64_t connections_total;     /* conexiones históricas        */

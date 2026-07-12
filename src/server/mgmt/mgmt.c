@@ -1,8 +1,8 @@
 /**
  * mgmt.c - TRANSPORTE del protocolo de monitoreo (SMP). Ver mgmt.h / PROTOCOL.md.
  *
- * Dueño: Persona B. Atiende el 2º socket pasivo en el mismo selector no
- * bloqueante que el proxy. Cada conexión administrativa es una instancia de
+ * Atiende el 2º socket pasivo en el mismo selector no bloqueante que el proxy.
+ * Cada conexión administrativa es una instancia de
  * `struct mgmt` manejada por una máquina de estados (stm):
  *
  *   GREETING ─▶ READ ─▶ WRITE ─▶ (READ | DONE)
@@ -32,7 +32,7 @@
 
 /** El buffer de lectura debe poder contener una línea completa (CRLF incluido). */
 #define MGMT_READ_BUFFER_SIZE  MGMT_LINE_MAX
-/** Holgado para respuestas (incluidas las multilínea chicas de MF1). */
+/** Holgado para respuestas (incluidas las multilínea chicas). */
 #define MGMT_WRITE_BUFFER_SIZE 4096
 
 /*

@@ -1,8 +1,7 @@
 /**
  * metrics.c - contadores volátiles (ver metrics.h).
  *
- * Implementación del commit de bases. Como todo corre en un hilo no hacen falta
- * atómicos. Dueño: Persona C.
+ * Como todo corre en un único hilo no hacen falta atómicos.
  */
 #include "metrics.h"
 

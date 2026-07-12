@@ -15,8 +15,6 @@
  * Cada acceso se imprime a stdout Y se guarda en un buffer circular en memoria
  * con las últimas ACCESS_LOG_CAPACITY entradas, para que el protocolo de
  * monitoreo (mgmt, GET-LOG) las pueda consultar. Volátil: se pierde al reiniciar.
- *
- * CONTRATO COMPARTIDO — ver docs/PLAN.md §3.3 y docs/PROTOCOL.md §5.8.
  */
 
 /** capacidad del buffer circular: se conservan las últimas N entradas */

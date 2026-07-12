@@ -13,7 +13,7 @@
  * Header-only a propósito: como el protocolo es de texto, la serialización es
  * trivial (printf/sscanf) y cada lado la hace por su cuenta; lo único que se
  * comparte son estas constantes. Así no hay que linkear un .c común entre los
- * dos binarios (ver decisión de build en docs/PLAN.md).
+ * dos binarios.
  *
  * La especificación normativa (estilo-RFC, agnóstica al lenguaje) vive en
  * docs/PROTOCOL.md. Si algo de acá cambia, ese documento DEBE cambiar también.

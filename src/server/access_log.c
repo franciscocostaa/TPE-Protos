@@ -8,7 +8,7 @@
  *   <timestamp ISO-8601>  <username>  <client_addr>  <dest>:<port>  REP=<rep>
  *
  * Todo corre en un único hilo (el mismo selector atiende el proxy y el mgmt),
- * así que el buffer no necesita locks. Dueño: Persona C.
+ * así que el buffer no necesita locks.
  */
 #include <stdio.h>
 #include <string.h>
