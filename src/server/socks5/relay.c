@@ -51,6 +51,24 @@ copy_read(struct selector_key *key) {
     const ssize_t n = recv(key->fd, ptr, size, 0);
     if (n > 0) {
         buffer_write_adv(c->rb, n);
+
+        /*
+         * los bytes recien leidos ya estan en el buffer que debe
+         * escribir el otro fd. Intentamos enviarlos ahora para evitar esperar
+         * otra vuelta de pselect() solo para recibir el evento OP_WRITE.
+         */
+        if (*c->other->fd != -1 && buffer_can_read(c->other->wb)) {
+            struct selector_key other_key = *key;
+            other_key.fd = *c->other->fd;
+
+            /*
+             * Si el socket no esta listo, copy_write() no bloquea: deja los
+             * bytes pendientes y luego copy_compute_interests() mantiene OP_WRITE.
+             */
+            if (copy_write(&other_key) == DONE) {
+                return DONE;
+            }
+        }
     } else if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
         c->duplex &= ~OP_READ;
         if (*c->other->fd != -1) {

@@ -18,9 +18,9 @@ el [RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
 
 | Decisión | Elección | Por qué |
 |---|---|---|
-| **Transporte** | TCP, multiplexado en el mismo selector no bloqueante del proxy. | Confiable y orientado a conexión; reutiliza la infraestructura existente. |
-| **Codificación** | **Texto**, líneas terminadas en CRLF, ASCII. | Simple de implementar, depurable con `telnet`/`nc`, y suficiente para un canal administrativo de bajo volumen. Inspirado en POP3/SMTP. |
-| **Modelo** | Petición/respuesta sincrónico (un request → una response), sobre una conexión persistente. | El cliente es secuencial; no hace falta pipelining ni IDs de correlación. |
+| **Transporte** | TCP, multiplexado en el mismo selector no bloqueante del proxy. | reutilizamos la infraestrucura existente |
+| **Codificación** | **Texto**, líneas terminadas en CRLF, ASCII. | Simple de implementar, depurable con `telnet`/`nc`, y suficiente para un canal administrativo de bajo volumen. |
+| **Modelo** | Petición/respuesta sincrónico (un request → una response), sobre una conexión persistente. 
 | **Autenticación** | **Token compartido** enviado en el comando `AUTH`. | El secreto se configura por línea de comandos en servidor (`-t`) y se pasa al cliente (`client ... -t <token>`). Sin `-t`, el servidor usa un token de desarrollo compilado por defecto. |
 | **Estado** | Con estado: la conexión arranca *no autenticada* y pasa a *autenticada* tras un `AUTH` válido. | Evita repetir credenciales en cada comando. |
 
