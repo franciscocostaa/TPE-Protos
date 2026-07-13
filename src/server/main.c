@@ -1,14 +1,3 @@
-/**
- * main.c - servidor proxy SOCKSv5 + servicio de monitoreo (sockets no bloqueantes).
- *
- * Monta DOS sockets pasivos en un único proceso:
- *   - SOCKS5  (data-path del proxy)        -> socksv5_passive_accept
- *   - mgmt    (protocolo de monitoreo)     -> mgmt_passive_accept
- *
- * Ambos se atienden en un único hilo mediante el selector (multiplexación no
- * bloqueante). El único trabajo bloqueante (resolución de DNS con getaddrinfo)
- * se descarga en hilos auxiliares que notifican al selector cuando terminan.
- */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

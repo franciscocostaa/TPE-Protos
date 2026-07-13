@@ -1,8 +1,3 @@
-/**
- * config.c - implementación de la config global (ver config.h).
- *
- * Estructura y getters/setters que consumen el data-path y el mgmt.
- */
 #include <string.h>
 
 #include "config.h"

@@ -1,8 +1,3 @@
-/**
- * metrics.c - contadores volátiles (ver metrics.h).
- *
- * Como todo corre en un único hilo no hacen falta atómicos.
- */
 #include "metrics.h"
 
 static struct metrics_snapshot m;
