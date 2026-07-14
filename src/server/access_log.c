@@ -1,15 +1,3 @@
-/**
- * access_log.c - registro de accesos (ver access_log.h).
- *
- * Cada acceso se imprime a stdout (auditoría en vivo) y se guarda en un buffer
- * circular en memoria con las últimas ACCESS_LOG_CAPACITY entradas, para que el
- * protocolo de monitoreo (GET-LOG) las pueda leer. Formato del stdout (tabs):
- *
- *   <timestamp ISO-8601>  <username>  <client_addr>  <dest>:<port>  REP=<rep>
- *
- * Todo corre en un único hilo (el mismo selector atiende el proxy y el mgmt),
- * así que el buffer no necesita locks.
- */
 #include <stdio.h>
 #include <string.h>
 #include <time.h>

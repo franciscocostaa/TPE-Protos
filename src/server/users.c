@@ -1,8 +1,3 @@
-/**
- * users.c - store de usuarios en memoria (ver users.h).
- *
- * Arreglo estático de hasta USERS_MAX entradas.
- */
 #include <string.h>
 
 #include "users.h"
