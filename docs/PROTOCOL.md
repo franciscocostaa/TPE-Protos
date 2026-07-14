@@ -100,7 +100,7 @@ lo lea una persona. Un cliente debería decidir según el número, no según el 
 ```
 
 El cuerpo termina con una línea que contiene **únicamente un punto**. Para que un dato que
-empieza con `.` no se confunda con ese terminador, se usa *dot-stuffing*: quien envía le
+empieza con `.` no se confunda con ese terminador, quien envía le
 agrega un `.` extra al principio, y quien recibe se lo saca.
 
 ## 5. Comandos
