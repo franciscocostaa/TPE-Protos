@@ -499,8 +499,19 @@ main(int argc, char *argv[]) {
     }
 
     /* validaciones ANTES de tocar la red (fail-fast) */
-    if (cmd_argc < cmd->min_args || cmd_argc > cmd->max_args) {
-        fprintf(stderr, "client: uso: %s\n", cmd->usage);
+    if (cmd_argc < cmd->min_args) {
+        fprintf(stderr, "client: faltan argumentos para '%s'. uso: %s\n", cmd->name, cmd->usage);
+        return EXIT_FAILURE;
+    }
+    if (cmd_argc > cmd->max_args) {
+        fprintf(stderr, "client: '%s' recibió argumentos de más. uso: %s\n", cmd->name, cmd->usage);
+        for (int i = 0; i < cmd_argc; i++) {
+            if (strcmp(cmd_args[i], "-t") == 0) {
+                fprintf(stderr, "client: la opción -t <token> va antes del comando: %s <host> <port> -t <token> %s\n",
+                        prog, cmd->name);
+                break;
+            }
+        }
         return EXIT_FAILURE;
     }
     if (cmd->needs_auth && token == NULL) {
